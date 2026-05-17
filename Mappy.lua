@@ -424,16 +424,6 @@ function Mappy:ApplyProtectedInitState()
 	Minimap.ZoomOut:SetFrameLevel(MinimapBackdrop:GetFrameLevel() + 1)
 end
 
-function Mappy:ReparentLandmarks()
-	for vFrameIndex, vFrame in ipairs({Minimap:GetChildren()}) do
-		-- self:DebugMessage("Frame %s: Width: %s Height: %s Type: %s", vFrame:GetName() or "anonymous", vFrame:GetWidth() or "nil", vFrame:GetHeight() or "nil", vFrame:GetObjectType() or "nil")
-
-		if vFrame:GetName() ~= "MinimapBackdrop" then -- Don't reparent the backdrop since we want it to fade with the map
-			vFrame:SetParent(MinimapCluster)
-		end
-	end
-end
-
 function Mappy:FindMinimapButtons()
     self.MinimapButtons = {}
     self.MinimapButtonsByFrame = {}
@@ -2314,16 +2304,6 @@ and Gatherer.MiniNotes.UpdateMinimapNotes then
 		return unpack(vResult)
 	end
 end
-
-----------------------------------------
--- GatherMate support
-----------------------------------------
-
--- For some reason 10.1 made this code obsolete
--- It used to reparent the MiniPin from Minimap to MinimapCluster
--- But now reparenting places them behind the minimap strata (???)
--- It works marvelously without reparenting though
--- I'm leaving this section just in case lol
 
 ----------------------------------------
 -- MBB support

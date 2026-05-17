@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mappy-Continued is a World of Warcraft addon that transforms the minimap into a square shape with extensive customization. Written entirely in Lua, it runs directly in WoW with no build step. The TOC file (`Mappy.toc`) defines the load order and metadata.
+Mappy-Continued is a World of Warcraft addon that transforms the minimap into a square shape with extensive customization. Written entirely in Lua, it runs directly in WoW with no build step. This is the **Mappy-fufu** rebrand fork (separate addon / saved variables). The TOC file (`Mappy-fufu.toc`) defines the load order and metadata.
 
 **Maintainer philosophy:** This is a maintenance fork — preserve existing features with minimal changes. Avoid adding new features or refactoring unless explicitly requested.
 
 ## Key Files
 
-- **Mappy.toc** — Addon manifest (Interface version, SavedVariables, load order, optional deps)
-- **Mappy.lua** — Entire addon logic (~2,900 lines): initialization, minimap management, settings UI, profiles, slash commands, gathering integration
+- **Mappy-fufu.toc** — Addon manifest (Interface version, SavedVariables, load order, optional deps)
+- **Mappy.lua** — Entire addon logic (~3,000 lines): initialization, minimap management, settings UI, profiles, slash commands, gathering integration
 - **Libraries/** — Bundled custom libraries (MC2AddonLib, MC2DebugLib, MC2EventLib, MC2SchedulerLib, MC2UIElementsLib, LibStub, LibDropdown-1.0)
 - **Textures/** — BLP textures for minimap mask and gathering node icons
 
@@ -34,7 +34,7 @@ Mappy-Continued is a World of Warcraft addon that transforms the minimap into a 
 ```
 ADDON_LOADED event → AddonLoaded()
   ├─ InitializeSettings() (first run)
-  ├─ Load CurrentProfile from gMappy_Settings
+  ├─ Load CurrentProfile from gMappyFufu_Settings
   └─ Schedule InitializeMinimap (0.5s delay)
       ├─ FindMinimapButtons(), InitializeDragging(), InitializeSquareShape()
       ├─ Register event handlers (combat, movement, zone changes)
@@ -50,7 +50,7 @@ ADDON_LOADED event → AddonLoaded()
 
 ### Settings & Profiles
 
-- **SavedVariables:** `gMappy_Settings` (persisted by WoW between sessions)
+- **SavedVariables:** `gMappyFufu_Settings` (persisted by WoW between sessions)
 - **Profiles:** Named presets (DEFAULT, gather, etc.) with per-profile minimap size, alpha, visibility, position, gathering options
 - **Auto-profile switching:** Context-based selection (mounted, dungeon, battleground, default)
 - **Settings UI:** Three panels registered via `Settings.RegisterCanvasLayoutCategory()` — main options, button management, profiles
@@ -73,7 +73,7 @@ Minimap frames are protected by Blizzard. The addon checks `CanChangeProtectedSt
 - **Private members:** Underscore prefix (e.g., `_OptionsPanel`)
 - **No localization:** All UI strings are hardcoded in English
 - **No formal error handling:** Relies on WoW's built-in error catching
-- **TOC versioning:** Interface version and addon Version are updated manually in `Mappy.toc`
+- **TOC versioning:** Interface version and addon Version are updated manually in `Mappy-fufu.toc`
 
 ## Reference Documentation
 
