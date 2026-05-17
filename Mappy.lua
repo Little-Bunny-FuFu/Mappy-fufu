@@ -769,6 +769,7 @@ function Mappy:SetGhost(pGhost)
 	else
 		self:UnghostMinimap()
 	end
+	self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
 end
 
 function Mappy:GhostMinimap()
@@ -2217,7 +2218,8 @@ function Mappy:UpdateMoveHandle()
 
 	local vPos = gMappyFufu_Settings.Position
 
-	if vPos.UseAddonPosition and not vPos.LockPosition then
+	if vPos.UseAddonPosition and not vPos.LockPosition
+	and Mappy.CurrentProfile and Mappy.CurrentProfile.GhostMinimap then
 		vHandle:ClearAllPoints()
 		-- Anchor to the Minimap itself (read-only relativeTo, not a taint
 		-- write -- same class as the baseline CoordString/backdrop anchors)
