@@ -2219,12 +2219,11 @@ function Mappy:UpdateMoveHandle()
 
 	if vPos.UseAddonPosition and not vPos.LockPosition then
 		vHandle:ClearAllPoints()
-		vHandle:SetPoint(
-				vPos.Point or "TOPRIGHT",
-				UIParent,
-				vPos.RelativePoint or "TOPRIGHT",
-				vPos.OffsetX or -32,
-				vPos.OffsetY or -32)
+		-- Anchor to the Minimap itself (read-only relativeTo, not a taint
+		-- write -- same class as the baseline CoordString/backdrop anchors)
+		-- so the handle tracks the minimap live during a drag and always
+		-- sits at the same corner regardless of saved anchor or map size.
+		vHandle:SetPoint("TOPLEFT", Minimap, "TOPLEFT", 2, -2)
 		vHandle:Show()
 	else
 		vHandle:Hide()
