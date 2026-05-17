@@ -238,6 +238,38 @@ function Mappy:AddonLoaded(pEventID, pAddonName)
 		self.CurrentProfile = gMappyFufu_Settings.Profiles.DEFAULT
 	end
 
+	-- One-time migration: minimap positioning moved from per-profile to a
+	-- single global table so it survives profile auto/manual switches.
+	if not gMappyFufu_Settings.Position then
+		local vSrc
+		for _, vProfile in pairs(gMappyFufu_Settings.Profiles) do
+			if vProfile.UseAddonPosition then
+				vSrc = vProfile
+				break
+			end
+		end
+		vSrc = vSrc or gMappyFufu_Settings.Profiles.DEFAULT or self.CurrentProfile or {}
+		gMappyFufu_Settings.Position =
+		{
+			UseAddonPosition = vSrc.UseAddonPosition or false,
+			Point = vSrc.Point or "TOPRIGHT",
+			RelativePoint = vSrc.RelativePoint or "TOPRIGHT",
+			OffsetX = vSrc.OffsetX or -32,
+			OffsetY = vSrc.OffsetY or -32,
+			LockPosition = vSrc.LockPosition or false,
+		}
+	end
+	-- Strip the now-global keys from every stored profile.
+	for _, vProfile in pairs(gMappyFufu_Settings.Profiles) do
+		vProfile.UseAddonPosition = nil
+		vProfile.Point = nil
+		vProfile.RelativePoint = nil
+		vProfile.OffsetX = nil
+		vProfile.OffsetY = nil
+		vProfile.LockPosition = nil
+		vProfile.AttachmentPosition = nil
+	end
+
 	self.SchedulerLib:ScheduleUniqueTask(0.5, self.InitializeMinimap, self)
 	
 	self.OptionsPanel = self:New(self._OptionsPanel, UIParent)
@@ -265,11 +297,6 @@ function Mappy:InitializeSettings()
 				MinimapCombatAlpha = 0.2,
 				MinimapMovingAlpha = 0.2,
 
-				Point = "TOPRIGHT",
-				RelativePoint = "TOPRIGHT",
-				OffsetX = -32,
-				OffsetY = -32,
-
 				HideTimeOfDay = false,
 				HideZoneName = false,
 				GhostMinimap = false,
@@ -277,13 +304,12 @@ function Mappy:InitializeSettings()
 				StackToScreen = false,
 				HideBorder = false,
 				HideTracking = false,
-                HideAddonCompartment = false,
+				HideAddonCompartment = false,
 				HideTimeManagerClock = false,
 				FlashGatherNodes = false,
-                NormalGatherNodes = true, -- use large icons
-                UseAddonPosition = false,
-                CoordSize = 1,
-                CoordAnchor = "BOTTOMLEFT",
+				NormalGatherNodes = true, -- use large icons
+				CoordSize = 1,
+				CoordAnchor = "BOTTOMLEFT",
 			},
 			gather =
 			{
@@ -292,11 +318,6 @@ function Mappy:InitializeSettings()
 				MinimapCombatAlpha = 0,
 				MinimapMovingAlpha = 0,
 
-				Point = "CENTER",
-				RelativePoint = "CENTER",
-				OffsetX = 0,
-				OffsetY = 0,
-				
 				HideTimeOfDay = false,
 				HideZoneName = false,
 				GhostMinimap = true,
@@ -304,21 +325,26 @@ function Mappy:InitializeSettings()
 				StackToScreen = true,
 				HideBorder = true,
 				HideTracking = false,
-                HideAddonCompartment = false,
+				HideAddonCompartment = false,
 				HideTimeManagerClock = false,
 				FlashGatherNodes = true,
-                NormalGatherNodes = false, -- use large icons
-				AttachmentPosition = {
-					Point = "TOPRIGHT",
-					RelativeTo = UIParent,
-					RelativePoint = "TOPRIGHT",
-					OffsetX = -80,
-					OffsetY = -50
-				},
-                UseAddonPosition = false,
-                CoordSize = 1,
-                CoordAnchor = "BOTTOMLEFT",
+				NormalGatherNodes = false, -- use large icons
+				CoordSize = 1,
+				CoordAnchor = "BOTTOMLEFT",
 			},
+		},
+
+		-- Minimap position is global (account-wide), NOT per-profile, so it
+		-- survives auto/manual profile switches. Existing saved variables are
+		-- migrated from the active profile in AddonLoaded.
+		Position =
+		{
+			UseAddonPosition = false,
+			Point = "TOPRIGHT",
+			RelativePoint = "TOPRIGHT",
+			OffsetX = -32,
+			OffsetY = -32,
+			LockPosition = false,
 		},
 	}
 end
@@ -881,11 +907,11 @@ function Mappy:unghost(pParameter)
 end
 
 function Mappy:unlock(pParameter)
-    self.CurrentProfile.LockPosition = nil
+    gMappyFufu_Settings.Position.LockPosition = nil
 end
 
 function Mappy:lock(pParameter)
-    self.CurrentProfile.LockPosition = true
+    gMappyFufu_Settings.Position.LockPosition = true
 end
 
 function Mappy:save(pParameter)
@@ -1168,8 +1194,8 @@ function Mappy:ConfigureMinimap()
 	self:ConfigureMinimapOptions()
 
     -- Overwrite Edit Mode position or reapply it
-    if self.CurrentProfile.UseAddonPosition then
-	    self:SetFramePosition(MinimapCluster, self.CurrentProfile)
+    if gMappyFufu_Settings.Position.UseAddonPosition then
+	    self:SetFramePosition(MinimapCluster, gMappyFufu_Settings.Position)
     else
         C_EditMode.SetActiveLayout(
             EditModeManagerFrame.layoutInfo.activeLayout)
@@ -1587,19 +1613,19 @@ end
 
 function Mappy:TalentChanged()
     -- Restore Mappy positioning
-    if Mappy.CurrentProfile.UseAddonPosition then
+    if gMappyFufu_Settings.Position.UseAddonPosition then
         Mappy:LoadProfile(Mappy.CurrentProfile)
     end
 end
 
 function Mappy:EditModeExit()
-    if Mappy.CurrentProfile.UseAddonPosition then
+    if gMappyFufu_Settings.Position.UseAddonPosition then
         Mappy:LoadProfile(Mappy.CurrentProfile)
     end
 end
 
 function Mappy:EditModeEnter()
-    if Mappy.CurrentProfile.UseAddonPosition then
+    if gMappyFufu_Settings.Position.UseAddonPosition then
         C_EditMode.SetActiveLayout(
             EditModeManagerFrame.layoutInfo.activeLayout)
     end
@@ -1769,10 +1795,10 @@ end
 
 function Mappy:SetAddonPosition(pEnable)
     if pEnable then
-        self.CurrentProfile.UseAddonPosition = true
+        gMappyFufu_Settings.Position.UseAddonPosition = true
         MappyLockPositionCheckbuttonText:SetFontObject("GameFontNormalSmall")
     else
-        self.CurrentProfile.UseAddonPosition = nil
+        gMappyFufu_Settings.Position.UseAddonPosition = nil
         MappyLockPositionCheckbuttonText:SetFontObject("GameFontDisableSmall")
     end
     MappyLockPositionCheckbutton:SetEnabled(pEnable)
@@ -1783,9 +1809,9 @@ end
 
 function Mappy:SetLockPosition(pLock)
 	if pLock then
-		self.CurrentProfile.LockPosition = true
+		gMappyFufu_Settings.Position.LockPosition = true
 	else
-		self.CurrentProfile.LockPosition = nil
+		gMappyFufu_Settings.Position.LockPosition = nil
 	end
 end
 
@@ -1944,8 +1970,8 @@ function Mappy:MinimapMouseWheel(pWheelDirection)
 end
 
 function Mappy:StartMovingMinimap()
-	if self.CurrentProfile.LockPosition
-    or not self.CurrentProfile.UseAddonPosition then
+	if gMappyFufu_Settings.Position.LockPosition
+    or not gMappyFufu_Settings.Position.UseAddonPosition then
 		return
 	end
 
@@ -1962,8 +1988,8 @@ function Mappy:StartMovingMinimap()
 end
 
 function Mappy:StopMovingMinimap()
-	if self.CurrentProfile.LockPosition
-    or not self.CurrentProfile.UseAddonPosition then
+	if gMappyFufu_Settings.Position.LockPosition
+    or not gMappyFufu_Settings.Position.UseAddonPosition then
 		return
 	end
 
@@ -2151,12 +2177,12 @@ end
 function Mappy:PositionChanged()
 	local vPosition = self:GetFramePosition(MinimapCluster)
 	
-	self.CurrentProfile.Point = vPosition.Point
-	self.CurrentProfile.RelativePoint = vPosition.RelativePoint
-	self.CurrentProfile.OffsetX = vPosition.OffsetX
-	self.CurrentProfile.OffsetY = vPosition.OffsetY
+	gMappyFufu_Settings.Position.Point = vPosition.Point
+	gMappyFufu_Settings.Position.RelativePoint = vPosition.RelativePoint
+	gMappyFufu_Settings.Position.OffsetX = vPosition.OffsetX
+	gMappyFufu_Settings.Position.OffsetY = vPosition.OffsetY
 	
-	self:SetFramePosition(MinimapCluster, self.CurrentProfile)
+	self:SetFramePosition(MinimapCluster, gMappyFufu_Settings.Position)
 end
 
 function Mappy.SetFrameLevel(pFrame, pLevel)
@@ -2711,8 +2737,8 @@ function Mappy._OptionsPanel:OnShow()
 	self.FlashGatherNodesCheckbutton:SetChecked(Mappy.CurrentProfile.FlashGatherNodes)
 	self.SmallGatherNodesCheckbutton:SetChecked(not Mappy.CurrentProfile.NormalGatherNodes)
     self.OldGatherNodesCheckbutton:SetChecked(Mappy.CurrentProfile.OldGatherNodes)
-    self.AddonPositionCheckbutton:SetChecked(Mappy.CurrentProfile.UseAddonPosition)
-    self.LockPositionCheckbutton:SetChecked(Mappy.CurrentProfile.LockPosition)
+    self.AddonPositionCheckbutton:SetChecked(gMappyFufu_Settings.Position.UseAddonPosition)
+    self.LockPositionCheckbutton:SetChecked(gMappyFufu_Settings.Position.LockPosition)
 	self.GhostCheckbutton:SetChecked(Mappy.CurrentProfile.GhostMinimap)
 
     self.HideCoordinatesCheckbutton:SetChecked(not Mappy.CurrentProfile.HideCoordinates)
@@ -2721,7 +2747,7 @@ function Mappy._OptionsPanel:OnShow()
     self.CoordBottomRightCheckbutton:SetChecked(Mappy.CurrentProfile.CoordAnchor == "BOTTOMRIGHT")
     self.CoordSizeSlider:SetValue(Mappy.CurrentProfile.CoordSize or 1)
 
-    self.LockPositionCheckbutton:SetEnabled(Mappy.CurrentProfile.UseAddonPosition)
+    self.LockPositionCheckbutton:SetEnabled(gMappyFufu_Settings.Position.UseAddonPosition)
 
     if self.LockPositionCheckbutton:IsEnabled() then
         MappyLockPositionCheckbuttonText:SetFontObject("GameFontNormalSmall")
