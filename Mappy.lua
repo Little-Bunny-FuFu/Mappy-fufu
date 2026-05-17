@@ -448,6 +448,38 @@ function Mappy:ApplyProtectedInitState()
 	Minimap.ZoomOut:SetPoint("TOPLEFT", 2, -24)
 	Minimap.ZoomIn:SetFrameLevel(MinimapBackdrop:GetFrameLevel() + 1)
 	Minimap.ZoomOut:SetFrameLevel(MinimapBackdrop:GetFrameLevel() + 1)
+
+	-- Movement grab handle: lets the minimap be repositioned even on a
+	-- click-through (Ghost) profile without altering Ghost. Parented to
+	-- UIParent (NOT MinimapCluster) so it adds zero secure/taint surface.
+	if not Mappy.MoveHandle then
+		local vHandle = CreateFrame("Frame", "MappyMoveHandle", UIParent)
+		vHandle:SetSize(24, 24)
+		vHandle:SetFrameStrata("HIGH")
+		vHandle:EnableMouse(true)
+		vHandle:RegisterForDrag("LeftButton")
+		vHandle:SetScript("OnDragStart", function() Mappy:StartMovingMinimap() end)
+		vHandle:SetScript("OnDragStop", function() Mappy:StopMovingMinimap() end)
+
+		local vTex = vHandle:CreateTexture(nil, "OVERLAY")
+		vTex:SetAllPoints(vHandle)
+		vTex:SetColorTexture(1, 0.82, 0, 0.55)
+		vHandle.Texture = vTex
+
+		vHandle:SetScript("OnEnter", function(pSelf)
+			pSelf.Texture:SetColorTexture(1, 0.9, 0.3, 0.85)
+			GameTooltip:SetOwner(pSelf, "ANCHOR_RIGHT")
+			GameTooltip:SetText("Mappy: drag to move the minimap")
+			GameTooltip:Show()
+		end)
+		vHandle:SetScript("OnLeave", function(pSelf)
+			pSelf.Texture:SetColorTexture(1, 0.82, 0, 0.55)
+			GameTooltip:Hide()
+		end)
+
+		vHandle:Hide()
+		Mappy.MoveHandle = vHandle
+	end
 end
 
 function Mappy:FindMinimapButtons()
@@ -1201,6 +1233,8 @@ function Mappy:ConfigureMinimap()
             EditModeManagerFrame.layoutInfo.activeLayout)
     end
 
+	self:UpdateMoveHandle()
+
     if not (Mappy.FarmHudEnabled and FarmHud:IsVisible()) then
 	    Minimap:SetWidth(self.CurrentProfile.MinimapSize)
 	    Minimap:SetHeight(self.CurrentProfile.MinimapSize)
@@ -1813,6 +1847,7 @@ function Mappy:SetLockPosition(pLock)
 	else
 		gMappyFufu_Settings.Position.LockPosition = nil
 	end
+	self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
 end
 
 function Mappy:SetHideBorder(pHide)
@@ -2174,6 +2209,28 @@ function Mappy:SetFramePosition(pFrame, pPosition)
 	end
 end
 
+function Mappy:UpdateMoveHandle()
+	local vHandle = Mappy.MoveHandle
+	if not vHandle then
+		return
+	end
+
+	local vPos = gMappyFufu_Settings.Position
+
+	if vPos.UseAddonPosition and not vPos.LockPosition then
+		vHandle:ClearAllPoints()
+		vHandle:SetPoint(
+				vPos.Point or "TOPRIGHT",
+				UIParent,
+				vPos.RelativePoint or "TOPRIGHT",
+				vPos.OffsetX or -32,
+				vPos.OffsetY or -32)
+		vHandle:Show()
+	else
+		vHandle:Hide()
+	end
+end
+
 function Mappy:PositionChanged()
 	local vPosition = self:GetFramePosition(MinimapCluster)
 	
@@ -2183,6 +2240,7 @@ function Mappy:PositionChanged()
 	gMappyFufu_Settings.Position.OffsetY = vPosition.OffsetY
 	
 	self:SetFramePosition(MinimapCluster, gMappyFufu_Settings.Position)
+	self:UpdateMoveHandle()
 end
 
 function Mappy.SetFrameLevel(pFrame, pLevel)
