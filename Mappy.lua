@@ -901,7 +901,8 @@ function Mappy:ExecuteCommand(pCommand)
 		-- "/mappy normal" works as well as "/mappy default" (key DEFAULT).
 		local vMatchedKey
 		for vKey, vDisplay in pairs(self.ProfileNameMap) do
-			if vDisplay:lower() == vCommand and gMappyFufu_Settings.Profiles[vKey] then
+			if type(vDisplay) == "string" and vDisplay:lower() == vCommand
+			and gMappyFufu_Settings.Profiles[vKey] then
 				vMatchedKey = vKey
 				break
 			end
