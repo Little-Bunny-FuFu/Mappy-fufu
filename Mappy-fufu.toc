@@ -1,9 +1,10 @@
 ## Interface: 120005
-## Notes: Minimap enhancements
-## Title: Mappy Continued
+## Notes: Minimap enhancements (fufu fork of Mappy Continued)
+## Title: Mappy-fufu
 ## Author: John Stephen, LynchburgJack, Shushuda, wealdly, Little-Bunny-FuFu
 ## Version: 4.7.7
-## SavedVariables: gMappy_Settings
+## X-Website: https://github.com/Little-Bunny-FuFu/Mappy-fufu
+## SavedVariables: gMappyFufu_Settings
 ## OptionalDeps: Gatherer, GatherMate, GatherMate2, MBB, FarmHud
 
 Libraries/MC2AddonLib/MC2AddonLib.lua

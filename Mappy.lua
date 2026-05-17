@@ -5,7 +5,7 @@ _, Mappy = ...
 
 local gAddonName = select(1, ...)
 
-gMappy_Settings = nil
+gMappyFufu_Settings = nil
 
 -- MBB compatibility
 Mappy.MBBenabled = nil
@@ -196,16 +196,16 @@ Mappy.ProfileNameMap = {
 }
 
 Mappy.ObjectIconsNormalLargePath = "Interface\\MINIMAP\\ObjectIconsAtlas"
-Mappy.ObjectIconsHighlightLargePath = "Interface\\Addons\\Mappy\\Textures\\ObjectIconsAtlas_On"
+Mappy.ObjectIconsHighlightLargePath = "Interface\\Addons\\Mappy-fufu\\Textures\\ObjectIconsAtlas_On"
 
-Mappy.ObjectIconsNormalSmallPath = "Interface\\Addons\\Mappy\\Textures\\ObjectIconsAtlas_Small"
-Mappy.ObjectIconsHighlightSmallPath = "Interface\\Addons\\Mappy\\Textures\\ObjectIconsAtlas_On_Small"
+Mappy.ObjectIconsNormalSmallPath = "Interface\\Addons\\Mappy-fufu\\Textures\\ObjectIconsAtlas_Small"
+Mappy.ObjectIconsHighlightSmallPath = "Interface\\Addons\\Mappy-fufu\\Textures\\ObjectIconsAtlas_On_Small"
 
-Mappy.ObjectIconsNormalOldPath = "Interface\\Addons\\Mappy\\Textures\\ObjectIconsAtlas_Old"
-Mappy.ObjectIconsHighlightOldPath = "Interface\\Addons\\Mappy\\Textures\\ObjectIconsAtlas_On_Old"
+Mappy.ObjectIconsNormalOldPath = "Interface\\Addons\\Mappy-fufu\\Textures\\ObjectIconsAtlas_Old"
+Mappy.ObjectIconsHighlightOldPath = "Interface\\Addons\\Mappy-fufu\\Textures\\ObjectIconsAtlas_On_Old"
 
-Mappy.ObjectIconsNormalSmallOldPath = "Interface\\Addons\\Mappy\\Textures\\ObjectIconsAtlas_Small_Old"
-Mappy.ObjectIconsHighlightSmallOldPath = "Interface\\Addons\\Mappy\\Textures\\ObjectIconsAtlas_On_Small_Old"
+Mappy.ObjectIconsNormalSmallOldPath = "Interface\\Addons\\Mappy-fufu\\Textures\\ObjectIconsAtlas_Small_Old"
+Mappy.ObjectIconsHighlightSmallOldPath = "Interface\\Addons\\Mappy-fufu\\Textures\\ObjectIconsAtlas_On_Small_Old"
 
 Mappy.ObjectIconsNormalPath = ""
 Mappy.ObjectIconsHighlightPath = ""
@@ -226,16 +226,16 @@ function Mappy:AddonLoaded(pEventID, pAddonName)
 		return
 	end
 	
-	if not gMappy_Settings then
+	if not gMappyFufu_Settings then
 		self:InitializeSettings()
 	end
 	
 	--
 	
-	self.CurrentProfile = gMappy_Settings.Profiles[gMappy_Settings.CurrentProfileName]
+	self.CurrentProfile = gMappyFufu_Settings.Profiles[gMappyFufu_Settings.CurrentProfileName]
 	
 	if not self.CurrentProfile then
-		self.CurrentProfile = gMappy_Settings.Profiles.DEFAULT
+		self.CurrentProfile = gMappyFufu_Settings.Profiles.DEFAULT
 	end
 
 	self.SchedulerLib:ScheduleUniqueTask(0.5, self.InitializeMinimap, self)
@@ -254,7 +254,7 @@ function Mappy:AddonLoaded(pEventID, pAddonName)
 end
 
 function Mappy:InitializeSettings()
-	gMappy_Settings =
+	gMappyFufu_Settings =
 	{
 		Profiles =
 		{
@@ -673,7 +673,7 @@ end
 -- Combat-safe portion only
 -- Protected positioning ops are in ApplyProtectedInitState()
 function Mappy:InitializeSquareShape()
-	Minimap:SetMaskTexture("Interface\\Addons\\Mappy\\Textures\\MinimapMask")
+	Minimap:SetMaskTexture("Interface\\Addons\\Mappy-fufu\\Textures\\MinimapMask")
     MinimapCompassTexture:SetTexture(nil)
 
 	-- 10/14/2020 - Updated code to use the new Backdrop templates -LynchburgJack
@@ -687,7 +687,7 @@ function Mappy:InitializeSquareShape()
 		vStaticOverlay:ClearAllPoints()
 		vStaticOverlay:SetAllPoints(Minimap)
 		vStaticOverlay:SetDrawLayer("BACKGROUND")
-		vStaticOverlay:SetTexture("Interface\\Addons\\Mappy\\Textures\\UIHudMinimapHousingIndoorStaticBg")
+		vStaticOverlay:SetTexture("Interface\\Addons\\Mappy-fufu\\Textures\\UIHudMinimapHousingIndoorStaticBg")
 		-- Prevent overwriting with atlas area
 		vStaticOverlay.SetAtlas = function() end
 		MinimapBackdrop.StaticOverlayTexture = vStaticOverlay
@@ -777,8 +777,8 @@ function Mappy:SaveProfile(pName)
 		vProfile[vKey] = vValue
 	end
 	
-	gMappy_Settings.Profiles[vName] = vProfile
-	gMappy_Settings.CurrentProfileName = vName
+	gMappyFufu_Settings.Profiles[vName] = vProfile
+	gMappyFufu_Settings.CurrentProfileName = vName
 	
 	self.CurrentProfile = vProfile
 end
@@ -791,18 +791,18 @@ function Mappy:LoadProfileName(pName)
 	
 	local vName = pName:lower()
 	
-	if not gMappy_Settings.Profiles[vName] then
+	if not gMappyFufu_Settings.Profiles[vName] then
 		self:ErrorMessage("Couldn't find a saved profile with the name %s", pName)
 		return
 	end
 	
-	gMappy_Settings.CurrentProfileName = vName
-	self:LoadProfile(gMappy_Settings.Profiles[vName])
+	gMappyFufu_Settings.CurrentProfileName = vName
+	self:LoadProfile(gMappyFufu_Settings.Profiles[vName])
 end
 
 function Mappy:LoadDefaultProfile()
-	gMappy_Settings.CurrentProfileName = "DEFAULT"
-	self:LoadProfile(gMappy_Settings.Profiles.DEFAULT)
+	gMappyFufu_Settings.CurrentProfileName = "DEFAULT"
+	self:LoadProfile(gMappyFufu_Settings.Profiles.DEFAULT)
 end
 
 function Mappy:LoadProfile(pProfile)
@@ -844,23 +844,23 @@ function Mappy:ExecuteCommand(pCommand)
 	
 	-- See if there's a profile with the name and load it if there is
 		
-	elseif gMappy_Settings.Profiles[vCommand] then
-		gMappy_Settings.CurrentProfileName = vCommand
-		self:LoadProfile(gMappy_Settings.Profiles[vCommand])
+	elseif gMappyFufu_Settings.Profiles[vCommand] then
+		gMappyFufu_Settings.CurrentProfileName = vCommand
+		self:LoadProfile(gMappyFufu_Settings.Profiles[vCommand])
 	else
 		-- Also accept a profile's display name (ProfileNameMap), so
 		-- "/mappy normal" works as well as "/mappy default" (key DEFAULT).
 		local vMatchedKey
 		for vKey, vDisplay in pairs(self.ProfileNameMap) do
-			if vDisplay:lower() == vCommand and gMappy_Settings.Profiles[vKey] then
+			if vDisplay:lower() == vCommand and gMappyFufu_Settings.Profiles[vKey] then
 				vMatchedKey = vKey
 				break
 			end
 		end
 
 		if vMatchedKey then
-			gMappy_Settings.CurrentProfileName = vMatchedKey
-			self:LoadProfile(gMappy_Settings.Profiles[vMatchedKey])
+			gMappyFufu_Settings.CurrentProfileName = vMatchedKey
+			self:LoadProfile(gMappyFufu_Settings.Profiles[vMatchedKey])
 		else
 			self:ErrorMessage("Expected command")
 		end
@@ -938,7 +938,7 @@ end
 
 function Mappy:reset(pParameter)
 	self:InitializeSettings()
-	self:LoadProfile(gMappy_Settings.Profiles.DEFAULT)
+	self:LoadProfile(gMappyFufu_Settings.Profiles.DEFAULT)
 end
 
 function Mappy:gcompact()
@@ -1454,13 +1454,13 @@ function Mappy:SelectAutoProfile()
 	local instanceType = self:GetInstanceType()
 	if instanceType == "party"
 	or instanceType == "raid" then
-		profileName = gMappy_Settings.DungeonProfile
+		profileName = gMappyFufu_Settings.DungeonProfile
 	elseif instanceType == "pvp" then
-		profileName = gMappy_Settings.BattlegroundProfile
+		profileName = gMappyFufu_Settings.BattlegroundProfile
 	elseif IsMounted() or IsFlying() or self:IsDruidTravelForm() or UnitInVehicle("player") then
-		profileName = gMappy_Settings.MountedProfile
+		profileName = gMappyFufu_Settings.MountedProfile
 	else
-		profileName = gMappy_Settings.DefaultProfile
+		profileName = gMappyFufu_Settings.DefaultProfile
 	end
 	
 	-- Do nothing if no profile was selected
@@ -1469,7 +1469,7 @@ function Mappy:SelectAutoProfile()
 	end
 	
 	-- Fetch the profile
-	local profile = gMappy_Settings.Profiles[profileName]
+	local profile = gMappyFufu_Settings.Profiles[profileName]
 	if not profile then
 		return
 	end
@@ -2993,10 +2993,10 @@ function Mappy._ProfilesPanel:OnShow()
 		self.DefaultMenu:SetPoint("TOPLEFT", self.MountedMenu, "BOTTOMLEFT", 0, -20)
 	end
 
-	self.MountedMenu:SetCurrentValueText(Mappy:GetProfileName(gMappy_Settings.MountedProfile))
-	self.DungeonMenu:SetCurrentValueText(Mappy:GetProfileName(gMappy_Settings.DungeonProfile))
-	self.BattlegroundMenu:SetCurrentValueText(Mappy:GetProfileName(gMappy_Settings.BattlegroundProfile))
-	self.DefaultMenu:SetCurrentValueText(Mappy:GetProfileName(gMappy_Settings.DefaultProfile))
+	self.MountedMenu:SetCurrentValueText(Mappy:GetProfileName(gMappyFufu_Settings.MountedProfile))
+	self.DungeonMenu:SetCurrentValueText(Mappy:GetProfileName(gMappyFufu_Settings.DungeonProfile))
+	self.BattlegroundMenu:SetCurrentValueText(Mappy:GetProfileName(gMappyFufu_Settings.BattlegroundProfile))
+	self.DefaultMenu:SetCurrentValueText(Mappy:GetProfileName(gMappyFufu_Settings.DefaultProfile))
 	
 	Mappy.DisableUpdates = false
 end
@@ -3006,18 +3006,18 @@ end
 
 function Mappy._ProfilesPanel:ProfileMenuFunc(menu, profileIndex, items)
 	items:AddToggle("Don't change", function ()
-		return not gMappy_Settings[profileIndex]
+		return not gMappyFufu_Settings[profileIndex]
 	end, function (item)
-		gMappy_Settings[profileIndex] = nil
-		menu:SetCurrentValueText(Mappy:GetProfileName(gMappy_Settings[profileIndex]))
+		gMappyFufu_Settings[profileIndex] = nil
+		menu:SetCurrentValueText(Mappy:GetProfileName(gMappyFufu_Settings[profileIndex]))
 	end)
 
-	for profileID, profile in pairs(gMappy_Settings.Profiles) do
+	for profileID, profile in pairs(gMappyFufu_Settings.Profiles) do
 		items:AddToggle(Mappy:GetProfileName(profileID), function ()
-			return gMappy_Settings[profileIndex] == profileID
+			return gMappyFufu_Settings[profileIndex] == profileID
 		end, function (item)
-			gMappy_Settings[profileIndex] = profileID
-			menu:SetCurrentValueText(Mappy:GetProfileName(gMappy_Settings[profileIndex]))
+			gMappyFufu_Settings[profileIndex] = profileID
+			menu:SetCurrentValueText(Mappy:GetProfileName(gMappyFufu_Settings[profileIndex]))
 		end)
 	end
 end

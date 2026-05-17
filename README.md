@@ -69,3 +69,23 @@ Other features include:
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
+
+---
+
+## Fork notice — Mappy-fufu
+
+**Mappy-fufu** is an unofficial personal fork of
+[Mappy-Continued](https://github.com/Shushuda/Mappy-Continued) by Shushuda
+(itself a continuation of [Mappy](https://github.com/Mundocani/Mappy) by
+Mundocani), maintained by Little-Bunny-FuFu.
+
+It is rebranded as a separate addon (`Mappy-fufu`, saved variable
+`gMappyFufu_Settings`) — it does **not** share settings with stock Mappy and can
+be installed alongside it. Purpose of the fork: fix the free-drag minimap
+position not surviving combat under modern Blizzard Edit Mode (Edit Mode
+reasserts the Edit Mode–managed `MinimapCluster` on `PLAYER_REGEN_DISABLED`;
+Mappy only re-applies ~0.25 s after combat ends).
+
+Distributed under the upstream MIT License (retained in `LICENSE`); all original
+authors credited above. Not affiliated with or endorsed by the upstream authors.
+Upstream: <https://github.com/Shushuda/Mappy-Continued>
