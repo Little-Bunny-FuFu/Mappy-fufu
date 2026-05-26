@@ -1,4 +1,4 @@
-## Interface: 120005
+## Interface: 120005,120007
 ## Notes: Minimap enhancements (fufu fork of Mappy Continued)
 ## Title: Mappy-fufu
 ## Author: John Stephen, LynchburgJack, Shushuda, wealdly, Little-Bunny-FuFu
