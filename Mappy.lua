@@ -13,7 +13,11 @@ Mappy.MBBenabled = nil
 -- FarmHud compatibility
 Mappy.FarmHudEnabled = nil
 
-Mappy.enableBlips = true
+-- Minimap:SetBlipTexture and its sibling texture-setters were removed in patch
+-- 12.0.7 (2026-06-16) with no replacement, so custom gather-node blip textures
+-- are no longer possible. Gate every blip call on the method still existing so
+-- the addon runs on both 12.0.7+ and older clients.
+Mappy.enableBlips = (Minimap.SetBlipTexture ~= nil)
 
 Mappy.StackingInfo = {}
 
