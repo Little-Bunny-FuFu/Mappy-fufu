@@ -47,7 +47,8 @@ function Addon.DebugLib:FindDebugFrame()
 				end
 				
 				self.DebugFrame:SetFading(false)
-				self.DebugFrame:SetMaxResize(1200, 1000)
+				-- SetMaxResize was removed in 10.0 (SetResizeBounds replaced
+				-- it); the max-size clamp was cosmetic, so just drop it
 			end
 		end
 	end

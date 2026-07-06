@@ -377,9 +377,9 @@ function Mappy:InitializeMinimap()
     -- Minimap.lua:376
 	MinimapCluster.Layout = function() end
 
-	-- Add scroll wheel support
+	-- Add scroll wheel support (EnableMouseWheel is protected on the
+	-- minimap frames and is deferred into ApplyProtectedInitState)
 	Minimap:SetScript("OnMouseWheel", function (pMinimap, pDirection) self:MinimapMouseWheel(pDirection) end)
-	Minimap:EnableMouseWheel(true)
 
 	-- Set up drag scripts (RegisterForDrag is deferred)
 	Minimap:SetScript("OnDragStart", function() Mappy:StartMovingMinimap() end)
@@ -414,6 +414,10 @@ function Mappy:InitializeMinimap()
 	-- Schedule the configuration (includes deferred protected-state init)
 	self.SchedulerLib:ScheduleUniqueTask(0.5, self.ConfigureMinimap, self)
 
+	-- Rescan for minimap buttons created after the initial discovery
+	-- (LibDBIcon-style buttons typically appear at PLAYER_LOGIN or later)
+	self.SchedulerLib:ScheduleUniqueTask(5, self.RescanMinimapButtons, self)
+
 	-- Monitor the mounted state so we can determine which opacity setting to use
 	self.SchedulerLib:ScheduleUniqueRepeatingTask(0.5, self.UpdateMountedState, self)
 end
@@ -432,6 +436,9 @@ function Mappy:ApplyProtectedInitState()
 
 	-- Enable dragging
 	Minimap:RegisterForDrag("LeftButton")
+
+	-- Enable scroll-wheel zoom (protected, like RegisterForDrag)
+	Minimap:EnableMouseWheel(true)
 
 	-- Reposition Minimap within MinimapCluster
 	Minimap:Mappy_ClearAllPoints()
@@ -455,8 +462,9 @@ function Mappy:ApplyProtectedInitState()
 end
 
 function Mappy:FindMinimapButtons()
-    self.MinimapButtons = {}
-    self.MinimapButtonsByFrame = {}
+    -- Keep existing registrations on rescan (registration dedupes by frame)
+    self.MinimapButtons = self.MinimapButtons or {}
+    self.MinimapButtonsByFrame = self.MinimapButtonsByFrame or {}
 
     for _, vButtonName in ipairs(self.BlizzardButtonNames) do
         self.IgnoreFrames[vButtonName] = true
@@ -490,6 +498,24 @@ function Mappy:FindMinimapButtons()
         self:FindAddonButtons(MinimapBackdrop)
         self:FindAddonButtons(Minimap)
     end
+end
+
+-- Pick up buttons created after the initial discovery; only reconfigures
+-- (restacks) when something new was actually found
+function Mappy:RescanMinimapButtons()
+	local vCountBefore = #self.MinimapButtons
+
+	self:FindMinimapButtons()
+
+	if #self.MinimapButtons > vCountBefore then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+	end
+
+	-- One more pass for slow-initializing addons, then stop
+	if not self.DidFinalButtonRescan then
+		self.DidFinalButtonRescan = true
+		self.SchedulerLib:ScheduleTask(10, self.RescanMinimapButtons, self)
+	end
 end
 
 function Mappy:RegisterMinimapButton(pButton, pAlwaysStack)
@@ -1469,6 +1495,15 @@ function Mappy:SelectAutoProfile()
 		return
 	end
 
+	-- No auto-switch profile is configured: skip the instance/mount/form
+	-- queries below (this runs on the 0.2s update tick)
+	if not gMappyFufu_Settings.DungeonProfile
+	and not gMappyFufu_Settings.BattlegroundProfile
+	and not gMappyFufu_Settings.MountedProfile
+	and not gMappyFufu_Settings.DefaultProfile then
+		return
+	end
+
 	-- Use the instance type to figure out which profile to select
 	local profileName
 
@@ -1595,6 +1630,17 @@ end
 function Mappy:RegenEnabled()
 	self.InCombat = false
 
+	-- Finish a drag-stop that combat interrupted: clear the cluster's C-side
+	-- moving state without saving the position (Edit Mode reasserts the
+	-- cluster during combat, so where it sits now is not the user's drop
+	-- point); the reconfigure below restores the last saved position
+	if self.PendingStopMoving then
+		self.PendingStopMoving = nil
+		MinimapCluster:StopMovingOrSizing()
+		MinimapCluster:SetUserPlaced(true)
+		MinimapCluster:SetMovable(false)
+	end
+
 	-- Do a reconfiguration after a short delay
 	self.SchedulerLib:ScheduleUniqueTask(0.25, self.ConfigureMinimap, self)
 end
@@ -1624,9 +1670,16 @@ function Mappy:TalentChanged()
 end
 
 function Mappy:EditModeExit()
+    -- 'self' here is EditModeManagerFrame (hooksecurefunc callback)
     if gMappyFufu_Settings.Position.UseAddonPosition then
         Mappy:LoadProfile(Mappy.CurrentProfile)
     end
+
+    -- Replay any reconfigure work dropped by the Edit Mode bail in
+    -- ConfigureMinimap (profile switch / button OnShow while Edit Mode was
+    -- open); ConfigureMinimap re-gates itself, so this is safe when
+    -- nothing was dropped
+    Mappy.SchedulerLib:ScheduleUniqueTask(0.25, Mappy.ConfigureMinimap, Mappy)
 end
 
 function Mappy:EditModeEnter()
@@ -1999,6 +2052,9 @@ function Mappy:StopMovingMinimap()
 	end
 
 	if InCombatLockdown() then
+		-- Combat began mid-drag: the calls below are protected and would be
+		-- blocked. Flag it so RegenEnabled completes the stop after combat.
+		self.PendingStopMoving = true
 		return
 	end
 
@@ -2015,6 +2071,13 @@ function Mappy:StopMovingMinimap()
 end
 
 function Mappy:StartGatherFlash()
+	-- Flashing works by swapping the minimap blip texture; without the
+	-- blip setters (removed 12.0.7) there is nothing to flash, so don't
+	-- start the repeating task at all
+	if not Mappy.enableBlips then
+		return
+	end
+
 	self.EnableFlashingNodes = true
 
 	if not self.ObjectIconsNormalCache then
@@ -2049,13 +2112,13 @@ function Mappy:StopGatherFlash()
 end
 
 function Mappy:UpdateGatherFlash()
-	if not Mappy.enableBlips then
-		return
-	end
-
-	if not self.EnableFlashingNodes then
+	-- Retire the task before the blip-availability bail, otherwise the
+	-- repeating task ticks forever on clients without the blip setters
+	if not self.EnableFlashingNodes or not Mappy.enableBlips then
 		self.SchedulerLib:UnscheduleTask(self.UpdateGatherFlash, self)
-		Minimap:SetBlipTexture(self.ObjectIconsNormalPath)
+		if Mappy.enableBlips then
+			Minimap:SetBlipTexture(self.ObjectIconsNormalPath)
+		end
         self.GatherFlashState = false
 		return
 	end
@@ -2372,8 +2435,13 @@ local INSPECTED = 5
 local SOURCE = 6
 
 function Mappy:CompactGatherer()
-	-- Gatherer node data indices
-	
+	-- Gatherer may not be loaded; bail instead of erroring on a nil deref
+	if not (Gatherer and Gatherer.Storage and Gatherer.Storage.GetRawDataTable
+	and Gatherer.Report and Gatherer.Report.NeedsUpdate) then
+		self:ErrorMessage("gcompact requires the Gatherer addon, which is not loaded")
+		return
+	end
+
 	local vGatherData = Gatherer.Storage.GetRawDataTable()
 	
 	for vContinentIndex, vContinentData in ipairs(vGatherData) do
@@ -2787,8 +2855,9 @@ function Mappy._ButtonOptionsPanel:Construct(pParent)
 	self.parent = "Mappy Continued"
 
     local category = Mappy.SettingsCategory
+    -- Do NOT overwrite subcategory.ID: OpenToCategory needs the numeric ID
+    -- (same clobber class as the fixed /mappy root-panel bug)
     local subcategory, layout = Settings.RegisterCanvasLayoutSubcategory(category, self, self.name, self.name)
-    subcategory.ID = self.name
 
     --------------------------------
     -- title header
@@ -2942,8 +3011,9 @@ function Mappy._ProfilesPanel:Construct(pParent)
 	self.parent = "Mappy Continued"
 
     local category = Mappy.SettingsCategory
+    -- Do NOT overwrite subcategory.ID: OpenToCategory needs the numeric ID
+    -- (same clobber class as the fixed /mappy root-panel bug)
     local subcategory, layout = Settings.RegisterCanvasLayoutSubcategory(category, self, self.name, self.name)
-    subcategory.ID = self.name
 
     --------------------------------
     -- title header
