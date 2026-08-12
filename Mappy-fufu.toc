@@ -1,4 +1,4 @@
-## Interface: 120005,120007
+## Interface: 120005,120007,120100
 ## Notes: Minimap enhancements (fufu fork of Mappy Continued)
 ## Title: Mappy-fufu
 ## Category: Map

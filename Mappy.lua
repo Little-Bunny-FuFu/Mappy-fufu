@@ -1429,6 +1429,13 @@ function Mappy:IsButtonFrame(pFrame, pAnchoredTo)
 	local	vFrameWidth = pFrame:GetWidth()
 	local	vFrameHeight = pFrame:GetHeight()
 
+	-- 12.1 secret values: some Blizzard frames report secret dimensions to
+	-- tainted code, and comparing/arithmetic on those errors. Such frames are
+	-- secured Blizzard UI, never addon minimap buttons -- skip them.
+	if issecretvalue and (issecretvalue(vFrameWidth) or issecretvalue(vFrameHeight)) then
+		return false
+	end
+
 	if self.IgnoreFrames[vFrameName]
 	or self.MinimapButtonsByFrame[pFrame]
 	or vFrameType == "Model"
