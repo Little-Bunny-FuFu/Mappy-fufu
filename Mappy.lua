@@ -454,8 +454,14 @@ function Mappy:ApplyProtectedInitState()
 	MinimapCluster.ZoneTextButton:SetPoint("BOTTOM", Minimap, "TOP", 0, 4)
 	MinimapCluster.ZoneTextButton:SetSize(180, 12)
 
-	-- Move zoom buttons to the corner and raise strata above the backdrop
+	-- Move zoom buttons to the corner and raise strata above the backdrop.
+	-- Blizzard anchors both by CENTER (Minimap.xml); adding a TOPLEFT anchor
+	-- on top of that pins two points, so the 17px button stretched into a
+	-- giant "+"/"-" across the map whenever hovering the minimap made the
+	-- zoom buttons appear (MinimapMixin:OnEnter). Clear the CENTER first.
+	Minimap.ZoomIn:ClearAllPoints()
 	Minimap.ZoomIn:SetPoint("TOPLEFT", 22, -2)
+	Minimap.ZoomOut:ClearAllPoints()
 	Minimap.ZoomOut:SetPoint("TOPLEFT", 2, -24)
 	Minimap.ZoomIn:SetFrameLevel(MinimapBackdrop:GetFrameLevel() + 1)
 	Minimap.ZoomOut:SetFrameLevel(MinimapBackdrop:GetFrameLevel() + 1)
@@ -508,7 +514,7 @@ function Mappy:RescanMinimapButtons()
 	self:FindMinimapButtons()
 
 	if #self.MinimapButtons > vCountBefore then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		self:RequestReconfigure("rescan")
 	end
 
 	-- One more pass for slow-initializing addons, then stop
@@ -927,6 +933,7 @@ function Mappy:help()
     self:NoteMessage(HIGHLIGHT_FONT_COLOR_CODE.."/mappy unlock"..NORMAL_FONT_COLOR_CODE..": Unlocks the minimap for dragging")
     self:NoteMessage(HIGHLIGHT_FONT_COLOR_CODE.."/mappy lock"..NORMAL_FONT_COLOR_CODE..": Locks the minimap, preventing its movement")
     self:NoteMessage(HIGHLIGHT_FONT_COLOR_CODE.."/mappy reload"..NORMAL_FONT_COLOR_CODE..": Reload Mappy if something doesn't look right")
+    self:NoteMessage(HIGHLIGHT_FONT_COLOR_CODE.."/mappy perf"..NORMAL_FONT_COLOR_CODE..": Shows timings of the last minimap reconfigure passes")
 end
 
 function Mappy:ghost(pParameter)
@@ -955,6 +962,26 @@ end
 
 function Mappy:reload(pParameter)
     self:LoadProfile(self.CurrentProfile)
+end
+
+function Mappy:perf(pParameter)
+	local vLog = self.ConfigurePassLog
+
+	if not vLog or #vLog == 0 then
+		self:NoteMessage("No minimap reconfigure passes recorded yet")
+		return
+	end
+
+	self:NoteMessage("Last %d minimap reconfigure passes, oldest first: total ms (ms before button stacking), buttons stacked, trigger. '--' = pass aborted", #vLog)
+
+	for _, vPass in ipairs(vLog) do
+		self:NoteMessage("%s  %s ms (%s)  %s buttons  %s",
+				date("%H:%M:%S", vPass.Clock),
+				vPass.Total and string.format("%.1f", vPass.Total) or "--",
+				vPass.PreStack and string.format("%.1f", vPass.PreStack) or "--",
+				vPass.Buttons or "--",
+				vPass.Reason)
+	end
 end
 
 function Mappy:default(pParameter)
@@ -1200,6 +1227,36 @@ function Mappy:SetMinimapSize(pSize)
 	self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
 end
 
+-- Ring of the last CONFIGURE_PASS_LOG_SIZE ConfigureMinimap passes, printed
+-- by /mappy perf: wall time per pass (debugprofilestop, ms), the part spent
+-- before the button-stacking loop, buttons stacked, and what requested the
+-- pass (see RequestReconfigure). An entry that never got a Total is a pass
+-- aborted by an error, e.g. the 12.x "script ran too long" limit.
+local CONFIGURE_PASS_LOG_SIZE = 20
+
+function Mappy:BeginConfigurePass()
+	local vPass =
+	{
+		Clock = time(),
+		Reason = self.ConfigureReason or "other",
+		Start = debugprofilestop(),
+	}
+	self.ConfigureReason = nil
+
+	-- "A pass is running in this frame" marker for Button_OnShow/OnHide.
+	-- Frame time rather than a boolean, so a pass aborted by an error cannot
+	-- leave the marker stuck past its own frame.
+	self.ConfigurePassTime = GetTime()
+
+	self.ConfigurePassLog = self.ConfigurePassLog or {}
+	table.insert(self.ConfigurePassLog, vPass)
+	if #self.ConfigurePassLog > CONFIGURE_PASS_LOG_SIZE then
+		table.remove(self.ConfigurePassLog, 1)
+	end
+
+	return vPass
+end
+
 function Mappy:ConfigureMinimap()
 	-- Bail out if the minimap is in a protected state
 	if MinimapCluster:IsProtected() and not MinimapCluster:CanChangeProtectedState() then
@@ -1215,6 +1272,17 @@ function Mappy:ConfigureMinimap()
     if EditModeManagerFrame:IsEditModeActive() then
         return
     end
+
+	-- Never reposition/restack while the user is dragging the minimap: the
+	-- SetFramePosition below re-anchors the cluster to the *saved* position
+	-- mid-drag, so the drop is read back as the old spot and the map "snaps
+	-- back". Finish the pass after the drag instead (StopMovingMinimap).
+	if self.MinimapDragging then
+		self.ReconfigureAfterDrag = true
+		return
+	end
+
+	local vPass = self:BeginConfigurePass()
 
 	-- Apply one-time protected init on first out-of-combat run
 	self:ApplyProtectedInitState()
@@ -1302,9 +1370,12 @@ function Mappy:ConfigureMinimap()
 
 	-- Stack all the known buttons
 
+	vPass.PreStack = debugprofilestop() - vPass.Start
+
 	self:BeginStackingButtons()
 
 	local	vButton
+	local	vStacked = 0
 
 	for _, vNextButton in pairs(self.MinimapButtons) do
 
@@ -1327,6 +1398,7 @@ function Mappy:ConfigureMinimap()
 		if vNextButton.Mappy_SetPoint then
 			if vButton and vButton:IsVisible() then
 				self:StackButton(vButton, vNextButton)
+				vStacked = vStacked + 1
 			end
 
 			vButton = vNextButton
@@ -1335,9 +1407,14 @@ function Mappy:ConfigureMinimap()
 
 	if vButton and vButton:IsVisible() then
 		self:StackButton(vButton, nil)
+		vStacked = vStacked + 1
 	end
 
 	self:AdjustAlpha()
+
+	vPass.Buttons = vStacked
+	vPass.Total = debugprofilestop() - vPass.Start
+	self.ConfigurePassTime = nil
 end
 
 function Mappy:GetUIObjectDescription(pUIObject)
@@ -1649,7 +1726,7 @@ function Mappy:RegenEnabled()
 	end
 
 	-- Do a reconfiguration after a short delay
-	self.SchedulerLib:ScheduleUniqueTask(0.25, self.ConfigureMinimap, self)
+	self:RequestReconfigure("regen")
 end
 
 function Mappy:RegenDisabled()
@@ -1686,7 +1763,7 @@ function Mappy:EditModeExit()
     -- ConfigureMinimap (profile switch / button OnShow while Edit Mode was
     -- open); ConfigureMinimap re-gates itself, so this is safe when
     -- nothing was dropped
-    Mappy.SchedulerLib:ScheduleUniqueTask(0.25, Mappy.ConfigureMinimap, Mappy)
+    Mappy:RequestReconfigure("editmode")
 end
 
 function Mappy:EditModeEnter()
@@ -1905,13 +1982,43 @@ function Mappy:SetStackToScreen(pStackToScreen)
 	self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
 end
 
+-- Coalesce reconfigure requests that arrive in bursts (button Show/Hide at
+-- login and after loading screens, Blizzard indicator refreshes, button
+-- rescans) into ONE ConfigureMinimap pass a quarter second later, instead of
+-- restacking in the frame that raised them. The old delay-0 request ran the
+-- full pass inside the same frame as the event storm every other addon was
+-- also handling, and the scheduler runs a task appended mid-pass in that same
+-- OnUpdate, so a Show/Hide fired by ConfigureMinimap itself could run the
+-- pass twice in one already-hot frame -- which is where the 12.x "script ran
+-- too long" aborts in StackButton were landing. With a real delay a request
+-- raised during a pass becomes one follow-up pass on a later frame (the
+-- scheduler dedupes), never a same-frame re-entry. Blizzard's own
+-- InstanceDifficulty indicator defers its refresh by the same 250 ms.
+-- pReason is only bookkeeping for /mappy perf.
+function Mappy:RequestReconfigure(pReason)
+	self.ConfigureReason = self.ConfigureReason or pReason
+	self.SchedulerLib:ScheduleUniqueTask(0.25, self.ConfigureMinimap, self)
+end
+
 function Mappy.Button_OnHide(self, ...)
 	-- Only act when stacking is active (HookScript is permanent, so use flag)
 	if not self.Mappy_StackingActive then
 		return
 	end
 
-	Mappy.SchedulerLib:ScheduleUniqueTask(0, Mappy.ConfigureMinimap, Mappy)
+	-- Ignore visibility changes raised by the running pass itself.
+	-- ConfigureMinimap shows/hides these frames every pass and stacks them
+	-- in that same pass, so re-requesting is redundant -- and when another
+	-- addon reacts synchronously (Leatrix Plus "Hide addon menu" does
+	-- AddonCompartmentFrame:HookScript("OnShow", Hide)) the old behaviour
+	-- was an endless loop: Show -> hidden by the hook -> OnHide -> new pass
+	-- -> Show ... every frame, which burned the 12.x execution budget and
+	-- clobbered drags.
+	if Mappy.ConfigurePassTime == GetTime() then
+		return
+	end
+
+	Mappy:RequestReconfigure("hide:" .. (self:GetName() or "?"))
 end
 
 function Mappy.Button_OnShow(self, ...)
@@ -1920,7 +2027,12 @@ function Mappy.Button_OnShow(self, ...)
 		return
 	end
 
-	Mappy.SchedulerLib:ScheduleUniqueTask(0, Mappy.ConfigureMinimap, Mappy)
+	-- Raised by the running pass itself: see Button_OnHide
+	if Mappy.ConfigurePassTime == GetTime() then
+		return
+	end
+
+	Mappy:RequestReconfigure("show:" .. (self:GetName() or "?"))
 end
 
 ----------------------------------------
@@ -2050,6 +2162,7 @@ function Mappy:StartMovingMinimap()
 
 	-- Start moving
 	MinimapCluster:StartMoving()
+	self.MinimapDragging = true
 end
 
 function Mappy:StopMovingMinimap()
@@ -2058,10 +2171,14 @@ function Mappy:StopMovingMinimap()
 		return
 	end
 
+	self.MinimapDragging = nil
+
 	if InCombatLockdown() then
 		-- Combat began mid-drag: the calls below are protected and would be
-		-- blocked. Flag it so RegenEnabled completes the stop after combat.
+		-- blocked. Flag it so RegenEnabled completes the stop after combat
+		-- (RegenEnabled also reconfigures, so drop any deferred request).
 		self.PendingStopMoving = true
+		self.ReconfigureAfterDrag = nil
 		return
 	end
 
@@ -2075,6 +2192,12 @@ function Mappy:StopMovingMinimap()
 
 	-- Save the new position
 	self:PositionChanged()
+
+	-- Run any reconfigure that was deferred while dragging
+	if self.ReconfigureAfterDrag then
+		self.ReconfigureAfterDrag = nil
+		self:RequestReconfigure("dragstop")
+	end
 end
 
 function Mappy:StartGatherFlash()

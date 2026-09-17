@@ -57,7 +57,7 @@ ADDON_LOADED event → AddonLoaded()
 
 ### Slash Commands
 
-`/mappy <command>` — Commands include: `help`, `ghost`/`unghost`, `lock`/`unlock`, `save <name>`, `load <name>`, `reload`, `default`, `corner <corner>`, `cw`/`ccw`, `reset`, `gcompact`. Dispatched in `ExecuteCommand()`.
+`/mappy <command>` — Commands include: `help`, `ghost`/`unghost`, `lock`/`unlock`, `save <name>`, `load <name>`, `reload`, `default`, `corner <corner>`, `cw`/`ccw`, `reset`, `gcompact`, `perf` (timings of the last `ConfigureMinimap` passes). Dispatched in `ExecuteCommand()`.
 
 ### Optional Addon Integration
 
