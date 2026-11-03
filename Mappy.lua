@@ -2134,12 +2134,30 @@ function Mappy:UpdateCoords()
 end
 
 -- Set the map, zone name and clock alpha, and update the buttons
+-- fufu: true when a "Hide ..." option hides this Blizzard frame. In combat
+-- the SetHide* setters only SetAlpha(0) and defer the real Hide(), so the
+-- alpha writers below must keep such frames at 0 instead of fading them back
+-- in (MaxClaudely review 2026-11-03, F2).
+function Mappy:IsHiddenByOption(pFrame)
+    local vProfile = self.CurrentProfile
+    if not pFrame or not vProfile then
+        return false
+    end
+    return (pFrame == MinimapCluster.Tracking and vProfile.HideTracking)
+        or (pFrame == AddonCompartmentFrame and vProfile.HideAddonCompartment)
+        or (pFrame == GameTimeFrame and vProfile.HideTimeOfDay)
+        or (pFrame == TimeManagerClockButton and vProfile.HideTimeManagerClock)
+        or (pFrame == MinimapCluster.ZoneTextButton and vProfile.HideZoneName)
+        or (pFrame == MinimapCluster.DielFrame and vProfile.HideDiel)
+        or false
+end
+
 function Mappy:ApplyMinimapAlpha(pAlpha)
     self.MinimapFaderAlpha = pAlpha
     Minimap:SetAlpha(pAlpha)
-    MinimapCluster.ZoneTextButton:SetAlpha(pAlpha)
+    MinimapCluster.ZoneTextButton:SetAlpha(self:IsHiddenByOption(MinimapCluster.ZoneTextButton) and 0 or pAlpha)
     if TimeManagerClockButton then
-        TimeManagerClockButton:SetAlpha(pAlpha)
+        TimeManagerClockButton:SetAlpha(self:IsHiddenByOption(TimeManagerClockButton) and 0 or pAlpha)
     end
     self:SetButtonsAlpha()
 end
@@ -2705,8 +2723,11 @@ function Mappy:SetButtonsAlpha()
     -- Buttons follow the minimap alpha unless they ignore the sliders
     local vMinimapAlpha = self.CurrentProfile.FadeButtons and self.MinimapFaderAlpha or 1
     for _, vButton in ipairs(self.MinimapButtons) do
+        -- fufu: an option-hidden button whose Hide() is deferred stays at 0
+        if self:IsHiddenByOption(vButton) then
+            vButton:SetAlpha(0)
         -- Keep the Group Finder eye visible if enabled (Forever client)
-        if vButton == QueueStatusButton and self.CurrentProfile.AlwaysShowGroupFinder then
+        elseif vButton == QueueStatusButton and self.CurrentProfile.AlwaysShowGroupFinder then
             vButton:SetAlpha(vMinimapAlpha)
         else
             vButton:SetAlpha(self.ButtonFaderAlpha * vMinimapAlpha)
