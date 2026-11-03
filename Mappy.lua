@@ -713,6 +713,13 @@ function Mappy:RegisterMinimapButton(pButton, pAlwaysStack, pIndex)
 end
 
 function Mappy:ConfigureMinimapOptions()
+	-- Show/Hide calls are protected - defer if in combat
+	-- (fufu: upstream 73f3d93 removed this guard; kept)
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
+
 	-- Forever client
 	if Mappy.IsForeverClient and self.CurrentProfile.StackGroupFinder then
 		self:StackGroupFinder()
@@ -729,24 +736,28 @@ function Mappy:ConfigureMinimapOptions()
 	if self.CurrentProfile.HideTimeOfDay then
 		GameTimeFrame:Hide()
 	else
+		GameTimeFrame:SetAlpha(1)
 		GameTimeFrame:Show()
 	end
 
 	if self.CurrentProfile.HideZoneName then
         MinimapCluster.ZoneTextButton:Hide()
 	else
+		MinimapCluster.ZoneTextButton:SetAlpha(1)
         MinimapCluster.ZoneTextButton:Show()
 	end
 
 	if self.CurrentProfile.HideTracking then
         MinimapCluster.Tracking:Hide()
 	else
+		MinimapCluster.Tracking:SetAlpha(1)
         MinimapCluster.Tracking:Show()
 	end
 
     if self.CurrentProfile.HideAddonCompartment then
         AddonCompartmentFrame:Hide()
     else
+		AddonCompartmentFrame:SetAlpha(1)
         AddonCompartmentFrame:Show()
     end
 
@@ -756,6 +767,7 @@ function Mappy:ConfigureMinimapOptions()
 		end
 	else
 		if TimeManagerClockButton then
+			TimeManagerClockButton:SetAlpha(1)
 			TimeManagerClockButton:Show()
 		end
 	end
@@ -765,6 +777,7 @@ function Mappy:ConfigureMinimapOptions()
 		if self.CurrentProfile.HideDiel then
 			MinimapCluster.DielFrame:Hide()
 		else
+			MinimapCluster.DielFrame:SetAlpha(1)
 			MinimapCluster.DielFrame:Show()
 		end
 	end
@@ -1145,6 +1158,13 @@ end
 function Mappy:GhostMinimap()
 	self.CurrentProfile.GhostMinimap = true
 
+	-- Protected ops (EnableMouse, RegisterForDrag) - defer if in combat
+	-- (fufu: upstream 73f3d93 removed this guard; kept)
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
+
     if not self:IsMinimapInFarmHud() then
 	    Minimap:RegisterForDrag()
 	    Minimap:EnableMouse(false)
@@ -1158,6 +1178,13 @@ end
 
 function Mappy:UnghostMinimap()
 	self.CurrentProfile.GhostMinimap = false
+
+	-- Protected ops (EnableMouse, RegisterForDrag) - defer if in combat
+	-- (fufu: upstream 73f3d93 removed this guard; kept)
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
 
     if not self:IsMinimapInFarmHud() then
         Minimap:RegisterForDrag("LeftButton")
@@ -1649,6 +1676,12 @@ end
 function Mappy:ConfigureMinimap()
 	-- Bail out if the minimap is in a protected state
 	if MinimapCluster:IsProtected() and not MinimapCluster:CanChangeProtectedState() then
+		return
+	end
+
+    -- Combat is a no-no
+    -- (fufu: upstream 73f3d93 removed this; kept -- RegenEnabled reconfigures)
+	if InCombatLockdown() then
 		return
 	end
 
@@ -2313,30 +2346,60 @@ end
 function Mappy:SetHideTracking(pHide)
 	if pHide then
 		self.CurrentProfile.HideTracking = true
-        MinimapCluster.Tracking:Hide()
+		MinimapCluster.Tracking:SetAlpha(0)
 	else
 		self.CurrentProfile.HideTracking = nil
-        MinimapCluster.Tracking:Show()
+		MinimapCluster.Tracking:SetAlpha(1)
+	end
+	-- Real Show/Hide are protected - defer if in combat
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
+	if pHide then
+		MinimapCluster.Tracking:Hide()
+	else
+		MinimapCluster.Tracking:Show()
 	end
 end
 
 function Mappy:SetHideAddonCompartment(pHide)
-    if pHide then
-        self.CurrentProfile.HideAddonCompartment = true
-        AddonCompartmentFrame:Hide()
-    else
-        self.CurrentProfile.HideAddonCompartment = nil
-        AddonCompartmentFrame:Show()
-    end
+	if pHide then
+		self.CurrentProfile.HideAddonCompartment = true
+		AddonCompartmentFrame:SetAlpha(0)
+	else
+		self.CurrentProfile.HideAddonCompartment = nil
+		AddonCompartmentFrame:SetAlpha(1)
+	end
+	-- Real Show/Hide are protected - defer if in combat
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
+	if pHide then
+		AddonCompartmentFrame:Hide()
+	else
+		AddonCompartmentFrame:Show()
+	end
 end
 
 function Mappy:SetHideTimeManagerClock(pHide)
 	if pHide then
 		self.CurrentProfile.HideTimeManagerClock = true
-        TimeManagerClockButton:Hide()
+		TimeManagerClockButton:SetAlpha(0)
 	else
 		self.CurrentProfile.HideTimeManagerClock = nil
-        TimeManagerClockButton:Show()
+		TimeManagerClockButton:SetAlpha(1)
+	end
+	-- Real Show/Hide are protected - defer if in combat
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
+	if pHide then
+		TimeManagerClockButton:Hide()
+	else
+		TimeManagerClockButton:Show()
 	end
 
     -- Restack so the buttons stop or start skipping the clock
@@ -2346,20 +2409,40 @@ end
 function Mappy:SetHideDiel(pHide)
 	if pHide then
 		self.CurrentProfile.HideDiel = true
-        MinimapCluster.DielFrame:Hide()
+		MinimapCluster.DielFrame:SetAlpha(0)
 	else
 		self.CurrentProfile.HideDiel = nil
-        MinimapCluster.DielFrame:Show()
+		MinimapCluster.DielFrame:SetAlpha(1)
+	end
+	-- Real Show/Hide are protected - defer if in combat
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
+	if pHide then
+		MinimapCluster.DielFrame:Hide()
+	else
+		MinimapCluster.DielFrame:Show()
 	end
 end
 
 function Mappy:SetHideTimeOfDay(pHide)
 	if pHide then
 		self.CurrentProfile.HideTimeOfDay = true
-        GameTimeFrame:Hide()
+		GameTimeFrame:SetAlpha(0)
 	else
 		self.CurrentProfile.HideTimeOfDay = nil
-        GameTimeFrame:Show()
+		GameTimeFrame:SetAlpha(1)
+	end
+	-- Real Show/Hide are protected - defer if in combat
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
+	if pHide then
+		GameTimeFrame:Hide()
+	else
+		GameTimeFrame:Show()
 	end
 end
 
@@ -2397,10 +2480,20 @@ end
 function Mappy:SetHideZoneName(pHide)
 	if pHide then
 		self.CurrentProfile.HideZoneName = true
-        MinimapCluster.ZoneTextButton:Hide()
+		MinimapCluster.ZoneTextButton:SetAlpha(0)
 	else
 		self.CurrentProfile.HideZoneName = nil
-        MinimapCluster.ZoneTextButton:Show()
+		MinimapCluster.ZoneTextButton:SetAlpha(1)
+	end
+	-- Real Show/Hide are protected - defer if in combat
+	if InCombatLockdown() then
+		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+		return
+	end
+	if pHide then
+		MinimapCluster.ZoneTextButton:Hide()
+	else
+		MinimapCluster.ZoneTextButton:Show()
 	end
 end
 
@@ -2747,6 +2840,11 @@ end
 function Mappy:StartMovingMinimap()
 	if gMappyFufu_Settings.Position.LockPosition
     or not gMappyFufu_Settings.Position.UseAddonPosition then
+		return
+	end
+
+	-- fufu: StartMoving is protected; upstream 73f3d93 removed this guard
+	if InCombatLockdown() then
 		return
 	end
 
