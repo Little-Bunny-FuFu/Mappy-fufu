@@ -23,7 +23,22 @@ Mappy.StackingInfo = {}
 
 Mappy.CoordAnchorInfo = {}
 
-Mappy.BlizzardButtonNames = {
+-- fufu: 12.1.7 / Forever stopgap. Some of these frames are absent on Forever
+-- (and per upstream 5fe8173 may go in 12.1.7). A nil in a table constructor
+-- leaves a hole and ipairs() in FindMinimapButtons would stop there, silently
+-- dropping every later button; compact the list so absent frames are skipped.
+local function CompactNonNil(...)
+	local vResult = {}
+	for vIndex = 1, select("#", ...) do
+		local vValue = select(vIndex, ...)
+		if vValue ~= nil then
+			vResult[#vResult + 1] = vValue
+		end
+	end
+	return vResult
+end
+
+Mappy.BlizzardButtonNames = CompactNonNil(
     "GameTimeFrame",
     MinimapCluster.IndicatorFrame.MailFrame,
     MinimapCluster.IndicatorFrame.CraftingOrderFrame,
@@ -36,17 +51,23 @@ Mappy.BlizzardButtonNames = {
 	"MiniMapLFGFrame",
 	"GuildInstanceDifficulty",
     "ExpansionLandingPageMinimapButton",
-    "AddonCompartmentFrame",
-}
+    "AddonCompartmentFrame"
+)
 
 Mappy.BlizzardMinimalistButtons = {
     [GameTimeFrame] = true,
     [MinimapCluster.IndicatorFrame.MailFrame] = true,
-    [MinimapCluster.IndicatorFrame.CraftingOrderFrame] = true,
     [MinimapCluster.Tracking] = true,
-    [MinimapCluster.InstanceDifficulty] = true,
     [AddonCompartmentFrame] = true,
 }
+-- fufu: 12.1.7 / Forever stopgap (from upstream 5fe8173): a nil table key
+-- raises "table index is nil" at file load, so add these only if present.
+if MinimapCluster.IndicatorFrame.CraftingOrderFrame then
+    Mappy.BlizzardMinimalistButtons[MinimapCluster.IndicatorFrame.CraftingOrderFrame] = true
+end
+if MinimapCluster.InstanceDifficulty then
+    Mappy.BlizzardMinimalistButtons[MinimapCluster.InstanceDifficulty] = true
+end
 
 Mappy.OtherAddonButtonNames = {
 	"CT_RASets_Button",
@@ -353,6 +374,16 @@ function Mappy:InitializeSettings()
 	}
 end
 
+-- fufu: 12.1.7 / Forever stopgap. Zone text background, first one found:
+-- 12.1.5 (MinimapCluster.BorderTop), 12.1.7 / Forever (ZoneTextButton
+-- children). Same fallback chain as upstream 5fe8173; drop the BorderTop
+-- branch once 12.1.7 is live (or when the full upstream merge lands).
+function Mappy:GetZoneTextBorder()
+	local vZoneTextButton = MinimapCluster.ZoneTextButton
+	return MinimapCluster.BorderTop
+		or (vZoneTextButton and (vZoneTextButton.BorderTop or vZoneTextButton.StateTexture))
+end
+
 function Mappy:InitializeMinimap()
     -- Enlarge and add borders to minimalist buttons
     self:EnlargeMinimalistButtons()
@@ -370,7 +401,13 @@ function Mappy:InitializeMinimap()
 
 	-- Visually hide elements immediately via SetAlpha
 	-- The real Hide() calls happen in ApplyProtectedInitState when out of combat
-	MinimapCluster.BorderTop:SetAlpha(0)
+	-- fufu: 12.1.7 / Forever stopgap (from upstream 5fe8173): the zone text
+	-- border moved off MinimapCluster.BorderTop; an unguarded call here aborts
+	-- InitializeMinimap before ConfigureMinimap is scheduled.
+	local zoneTextBorder = self:GetZoneTextBorder()
+	if zoneTextBorder then
+		zoneTextBorder:SetAlpha(0)
+	end
 	Minimap.ZoomHitArea:SetAlpha(0)
 
     -- Workaround for self:GetParent():Layout() errors after 10.0.5
@@ -436,7 +473,10 @@ function Mappy:ApplyProtectedInitState()
 	self.ProtectedInitApplied = true
 
 	-- Hide elements
-	MinimapCluster.BorderTop:Hide()
+	local zoneTextBorder = self:GetZoneTextBorder() -- fufu: 12.1.7 stopgap
+	if zoneTextBorder then
+		zoneTextBorder:Hide()
+	end
 	Minimap.ZoomHitArea:Hide()
 
 	-- Enable dragging
@@ -684,15 +724,18 @@ function Mappy:EnlargeMinimalistButtons()
     MailFrameBG:SetSize(25,25)
 
     -- crafting orders
-    local CraftingOrderFrame = MinimapCluster.IndicatorFrame.CraftingOrderFrame:CreateTexture(nil, "OVERLAY")
-    CraftingOrderFrame:SetTexture(136430)
-    CraftingOrderFrame:SetPoint("CENTER", MiniMapCraftingOrderIcon, "CENTER", 10, -10)
-    CraftingOrderFrame:SetSize(53,53)
+    -- fufu: 12.1.7 / Forever stopgap: frame may be absent (upstream 5fe8173)
+    if MinimapCluster.IndicatorFrame.CraftingOrderFrame then
+        local CraftingOrderFrame = MinimapCluster.IndicatorFrame.CraftingOrderFrame:CreateTexture(nil, "OVERLAY")
+        CraftingOrderFrame:SetTexture(136430)
+        CraftingOrderFrame:SetPoint("CENTER", MiniMapCraftingOrderIcon, "CENTER", 10, -10)
+        CraftingOrderFrame:SetSize(53,53)
 
-    local CraftingOrderFrameBG = MinimapCluster.IndicatorFrame.CraftingOrderFrame:CreateTexture(nil, "BACKGROUND")
-    CraftingOrderFrameBG:SetTexture(136467)
-    CraftingOrderFrameBG:SetPoint("CENTER", MiniMapCraftingOrderIcon, "CENTER")
-    CraftingOrderFrameBG:SetSize(25,25)
+        local CraftingOrderFrameBG = MinimapCluster.IndicatorFrame.CraftingOrderFrame:CreateTexture(nil, "BACKGROUND")
+        CraftingOrderFrameBG:SetTexture(136467)
+        CraftingOrderFrameBG:SetPoint("CENTER", MiniMapCraftingOrderIcon, "CENTER")
+        CraftingOrderFrameBG:SetSize(25,25)
+    end
 
     -- tracking
     local Tracking = MinimapCluster.Tracking:CreateTexture(nil, "OVERLAY")
