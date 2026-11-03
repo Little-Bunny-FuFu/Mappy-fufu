@@ -2252,7 +2252,7 @@ end
 function Mappy:IsMouseOverMinimapArea()
 	if MinimapCluster:IsMouseOver()
 	or (MinimapCluster.ZoneTextButton:IsVisible() and MinimapCluster.ZoneTextButton:IsMouseOver())
-	or (TimeManagerClockButton:IsVisible() and TimeManagerClockButton:IsMouseOver()) then
+	or (TimeManagerClockButton and TimeManagerClockButton:IsVisible() and TimeManagerClockButton:IsMouseOver()) then
 		return true
 	end
 
@@ -2299,18 +2299,35 @@ function Mappy:EditModeExit()
 end
 
 function Mappy:EditModeEnter()
-    -- Move the minimap to its Edit Mode position
-    -- (fufu: upstream 106adfe replaced the addon-initiated
-    -- C_EditMode.SetActiveLayout with a read-only anchor copy; position is global)
+    -- 'self' here is EditModeManagerFrame (hooksecurefunc callback)
+    -- fufu: schedule only. The work below re-anchors frames through the saved
+    -- SetPoint (Blizzard's Edit Mode override on MinimapCluster) and, on
+    -- Forever, reparents/re-anchors QueueStatusButton; doing that inside
+    -- EnterEditMode's call chain is the taint class from 2026-05-16. Run it
+    -- on the next frame instead (codex review 2026-11-03).
+    Mappy.SchedulerLib:ScheduleUniqueTask(0, Mappy.ApplyEditModeEntry, Mappy)
+end
+
+function Mappy:ApplyEditModeEntry()
+    -- Edit Mode may have closed again, and Edit Mode can't open in combat,
+    -- but guard anyway: these calls are protected-adjacent
+    if not EditModeManagerFrame:IsEditModeActive() or InCombatLockdown() then
+        return
+    end
+
+    -- Move the minimap to its Edit Mode position. Upstream 106adfe replaced
+    -- the addon-initiated C_EditMode.SetActiveLayout with ApplyEditModeAnchor,
+    -- which reads systemInfo and re-anchors via the saved SetPoint. Position
+    -- is global in this fork.
     if gMappyFufu_Settings.Position.UseAddonPosition then
-        Mappy:ApplyEditModeAnchor(MinimapCluster)
+        self:ApplyEditModeAnchor(MinimapCluster)
     end
 
     -- Let Edit Mode move the Group Finder eye, it's restacked on exit
     -- Forever client
-    if Mappy.MinimapButtonsByFrame[QueueStatusButton] then
-        Mappy:ReleaseGroupFinder()
-        Mappy:StackMinimapButtons()
+    if self.MinimapButtonsByFrame[QueueStatusButton] then
+        self:ReleaseGroupFinder()
+        self:StackMinimapButtons()
     end
 end
 
