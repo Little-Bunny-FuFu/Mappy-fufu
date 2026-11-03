@@ -13,46 +13,48 @@ Mappy.MBBenabled = nil
 -- FarmHud compatibility
 Mappy.FarmHudEnabled = nil
 
+-- Immersion compatibility
+Mappy.ImmersionEnabled = nil
+
 -- Minimap:SetBlipTexture and its sibling texture-setters were removed in patch
 -- 12.0.7 (2026-06-16) with no replacement, so custom gather-node blip textures
 -- are no longer possible. Gate every blip call on the method still existing so
--- the addon runs on both 12.0.7+ and older clients.
+-- the addon runs on both 12.0.7+ and older clients. (fufu: feature-detect
+-- kept over upstream's hardcoded `false`.)
 Mappy.enableBlips = (Minimap.SetBlipTexture ~= nil)
+
+-- WoW Forever client
+Mappy.IsForeverClient = WOW_PROJECT_ID == WOW_PROJECT_CAMELOT
 
 Mappy.StackingInfo = {}
 
 Mappy.CoordAnchorInfo = {}
 
--- fufu: 12.1.7 / Forever stopgap. Some of these frames are absent on Forever
--- (and per upstream 5fe8173 may go in 12.1.7). A nil in a table constructor
--- leaves a hole and ipairs() in FindMinimapButtons would stop there, silently
--- dropping every later button; compact the list so absent frames are skipped.
-local function CompactNonNil(...)
-	local vResult = {}
-	for vIndex = 1, select("#", ...) do
-		local vValue = select(vIndex, ...)
-		if vValue ~= nil then
-			vResult[#vResult + 1] = vValue
-		end
-	end
-	return vResult
-end
+Mappy.FadeTarget = nil
+Mappy.MinimapFaderAlpha = 1
+Mappy.ButtonFaderAlpha = 1
+Mappy.FadeDuration = 0.25
+Mappy.IsHovering = false
+Mappy.ButtonHideDelay = 3
+Mappy.ButtonFadeDuration = 0.2
+Mappy.ButtonsHidden = false
 
-Mappy.BlizzardButtonNames = CompactNonNil(
+Mappy.BlizzardButtonNames = {
+    "MinimapCluster.DielFrame", -- Forever client
     "GameTimeFrame",
-    MinimapCluster.IndicatorFrame.MailFrame,
-    MinimapCluster.IndicatorFrame.CraftingOrderFrame,
-    MinimapCluster.Tracking,
+    "MinimapCluster.IndicatorFrame.MailFrame",
+    "MinimapCluster.IndicatorFrame.CraftingOrderFrame",
+    "MinimapCluster.Tracking",
 	"MiniMapBattlefieldFrame",
 	"MiniMapMeetingStoneFrame",
 	"MiniMapVoiceChatFrame",
 	"FeedbackUIButton",
-    MinimapCluster.InstanceDifficulty,
+    "MinimapCluster.InstanceDifficulty",
 	"MiniMapLFGFrame",
 	"GuildInstanceDifficulty",
     "ExpansionLandingPageMinimapButton",
-    "AddonCompartmentFrame"
-)
+    "AddonCompartmentFrame",
+}
 
 Mappy.BlizzardMinimalistButtons = {
     [GameTimeFrame] = true,
@@ -60,14 +62,22 @@ Mappy.BlizzardMinimalistButtons = {
     [MinimapCluster.Tracking] = true,
     [AddonCompartmentFrame] = true,
 }
--- fufu: 12.1.7 / Forever stopgap (from upstream 5fe8173): a nil table key
--- raises "table index is nil" at file load, so add these only if present.
+
+-- Retail client
 if MinimapCluster.IndicatorFrame.CraftingOrderFrame then
     Mappy.BlizzardMinimalistButtons[MinimapCluster.IndicatorFrame.CraftingOrderFrame] = true
 end
 if MinimapCluster.InstanceDifficulty then
     Mappy.BlizzardMinimalistButtons[MinimapCluster.InstanceDifficulty] = true
 end
+
+-- Blizzard's minimap insets for buttons Mappy moves
+-- IDs are Blizz's local constants
+Mappy.BlizzardInsetIDs = {
+    ExpansionLandingPageOverlay = true,
+    CamelotDielFrame = true, -- Forever client
+    CamelotQueueStatusButton = true, -- Forever client
+}
 
 Mappy.OtherAddonButtonNames = {
 	"CT_RASets_Button",
@@ -80,6 +90,9 @@ Mappy.IgnoreFrames = {
 	MiniMapPing = true,
 	MinimapToggleButton = true,
 	MinimapZoneTextButton = true,
+
+	-- Group Finder eye, only stacked if enabled in options (Forever client)
+	QueueStatusButton = true,
 
 	CT_RASetsFrame = true,
 }
@@ -235,7 +248,17 @@ Mappy.ObjectIconsHighlightSmallOldPath = "Interface\\Addons\\Mappy-fufu\\Texture
 Mappy.ObjectIconsNormalPath = ""
 Mappy.ObjectIconsHighlightPath = ""
 
-Mappy.LandmarkArrows = {}
+Mappy.HousingIndoorBgPath = "Interface\\Addons\\Mappy-fufu\\Textures\\UIHudMinimapHousingIndoorStaticBg"
+
+Mappy.MinimapMaskPath = "Interface\\Addons\\Mappy-fufu\\Textures\\MinimapMask"
+
+Mappy.SquareQuestRingPath = "Interface\\Addons\\Mappy-fufu\\Textures\\SquareQuestRing"
+Mappy.SquareTaskRingPath = "Interface\\Addons\\Mappy-fufu\\Textures\\SquareTaskRing"
+Mappy.SquareArchRingPath = "Interface\\Addons\\Mappy-fufu\\Textures\\SquareArchRing"
+
+-- Shown ring alpha, 0-255 scale
+-- Stolen from the regular map's defaults, eyeballed to be correct lol
+Mappy.BlobRingAlpha = 128
 
 
 -- local functions
@@ -254,7 +277,11 @@ function Mappy:AddonLoaded(pEventID, pAddonName)
 	if not gMappyFufu_Settings then
 		self:InitializeSettings()
 	end
-	
+
+	-- (fufu: upstream 5fe8173's AttachmentPosition strip is not merged; the
+	-- fork's migration below already removes the key, and upstream's loop read
+	-- the old gMappy_Settings global, which is nil here.)
+
 	--
 	
 	self.CurrentProfile = gMappyFufu_Settings.Profiles[gMappyFufu_Settings.CurrentProfileName]
@@ -298,6 +325,7 @@ function Mappy:AddonLoaded(pEventID, pAddonName)
 	self.SchedulerLib:ScheduleUniqueTask(0.5, self.InitializeMinimap, self)
 	
 	self.OptionsPanel = self:New(self._OptionsPanel, UIParent)
+	self.AppearancePanel = self:New(self._AppearancePanel, UIParent)
 	self.ButtonOptionsPanel = self:New(self._ButtonOptionsPanel, UIParent)
 	self.ProfilesPanel = self:New(self._ProfilesPanel, UIParent)
 	
@@ -331,10 +359,22 @@ function Mappy:InitializeSettings()
 				HideTracking = false,
 				HideAddonCompartment = false,
 				HideTimeManagerClock = false,
+				HideDiel = false,
 				FlashGatherNodes = false,
 				NormalGatherNodes = true, -- use large icons
 				CoordSize = 1,
 				CoordAnchor = "BOTTOMLEFT",
+				-- fufu: upstream's new options; FadeButtons/AutoHideButtons/
+				-- StackGroupFinder default OFF here (user decision 2026-11-03).
+				-- No UseAddonPosition: positioning is global (gMappyFufu_Settings.Position).
+				MinimapHoverOpaque = false,
+				FadeButtons = false,
+				AutoHideButtons = false,
+				HideQuestRing = false,
+				HideTaskRing = false,
+				HideArchRing = false,
+				StackGroupFinder = false,
+				AlwaysShowGroupFinder = true,
 			},
 			gather =
 			{
@@ -352,10 +392,19 @@ function Mappy:InitializeSettings()
 				HideTracking = false,
 				HideAddonCompartment = false,
 				HideTimeManagerClock = false,
+				HideDiel = false,
 				FlashGatherNodes = true,
 				NormalGatherNodes = false, -- use large icons
 				CoordSize = 1,
 				CoordAnchor = "BOTTOMLEFT",
+				MinimapHoverOpaque = false,
+				FadeButtons = false,
+				AutoHideButtons = false,
+				HideQuestRing = false,
+				HideTaskRing = false,
+				HideArchRing = false,
+				StackGroupFinder = false,
+				AlwaysShowGroupFinder = true,
 			},
 		},
 
@@ -374,16 +423,6 @@ function Mappy:InitializeSettings()
 	}
 end
 
--- fufu: 12.1.7 / Forever stopgap. Zone text background, first one found:
--- 12.1.5 (MinimapCluster.BorderTop), 12.1.7 / Forever (ZoneTextButton
--- children). Same fallback chain as upstream 5fe8173; drop the BorderTop
--- branch once 12.1.7 is live (or when the full upstream merge lands).
-function Mappy:GetZoneTextBorder()
-	local vZoneTextButton = MinimapCluster.ZoneTextButton
-	return MinimapCluster.BorderTop
-		or (vZoneTextButton and (vZoneTextButton.BorderTop or vZoneTextButton.StateTexture))
-end
-
 function Mappy:InitializeMinimap()
     -- Enlarge and add borders to minimalist buttons
     self:EnlargeMinimalistButtons()
@@ -391,24 +430,27 @@ function Mappy:InitializeMinimap()
     -- Locate the addon buttons around the minimap
 	self:FindMinimapButtons()
 
-	-- Save method references for dragging
-	MinimapCluster.Mappy_SetPoint = MinimapCluster.SetPoint
-	MinimapCluster.Mappy_ClearAllPoints = MinimapCluster.ClearAllPoints
-	Minimap.Mappy_SetPoint = Minimap.SetPoint
-	Minimap.Mappy_ClearAllPoints = Minimap.ClearAllPoints
-
+    self:InitializeDragging()
 	self:InitializeSquareShape()
+
+	-- Zone text background, first one found: 12.1.5, 12.1.7, Forever
+	-- TODO: Remove MinimapCluster.BorderTop once 12.1.7 is live
+	self.ZoneTextBorder = MinimapCluster.BorderTop
+		or MinimapCluster.ZoneTextButton.BorderTop
+		or MinimapCluster.ZoneTextButton.StateTexture
 
 	-- Visually hide elements immediately via SetAlpha
 	-- The real Hide() calls happen in ApplyProtectedInitState when out of combat
-	-- fufu: 12.1.7 / Forever stopgap (from upstream 5fe8173): the zone text
-	-- border moved off MinimapCluster.BorderTop; an unguarded call here aborts
-	-- InitializeMinimap before ConfigureMinimap is scheduled.
-	local zoneTextBorder = self:GetZoneTextBorder()
-	if zoneTextBorder then
-		zoneTextBorder:SetAlpha(0)
+	-- (fufu: upstream 73f3d93 Hide()s here directly; combat deferral kept)
+	if self.ZoneTextBorder then
+		self.ZoneTextBorder:SetAlpha(0)
 	end
 	Minimap.ZoomHitArea:SetAlpha(0)
+
+	-- Remove the zone text hover glow (Forever client)
+	if MinimapCluster.ZoneTextButton.AddTexture then
+		MinimapCluster.ZoneTextButton.AddTexture:SetTexture(nil)
+	end
 
     -- Workaround for self:GetParent():Layout() errors after 10.0.5
     -- Minimap.lua:376
@@ -417,10 +459,6 @@ function Mappy:InitializeMinimap()
 	-- Add scroll wheel support (EnableMouseWheel is protected on the
 	-- minimap frames and is deferred into ApplyProtectedInitState)
 	Minimap:SetScript("OnMouseWheel", function (pMinimap, pDirection) self:MinimapMouseWheel(pDirection) end)
-
-	-- Set up drag scripts (RegisterForDrag is deferred)
-	Minimap:SetScript("OnDragStart", function() Mappy:StartMovingMinimap() end)
-	Minimap:SetScript("OnDragStop", function() Mappy:StopMovingMinimap() end)
 
 	-- Add the coordinates display
 	self.CoordString = Minimap:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -445,15 +483,102 @@ function Mappy:InitializeMinimap()
 
     self.EventLib:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED", self.TalentChanged, self)
 
-    -- Reapply addon positioning after Edit Mode exit
+	-- Hover alpha handling
+	Minimap:HookScript("OnEnter", function() Mappy:MinimapOnEnter() end)
+	Minimap:HookScript("OnLeave", function() Mappy:MinimapOnLeave() end)
+
+    -- Minimap fade workaround
+    self.MinimapFader = CreateFrame("Frame")
+    hooksecurefunc(self.MinimapFader, "SetAlpha", function(_, pAlpha) Mappy:ApplyMinimapAlpha(pAlpha) end)
+
+	-- Button mouseover fade workaround
+	self.ButtonFader = CreateFrame("Frame")
+    hooksecurefunc(self.ButtonFader, "SetAlpha", function(_, pAlpha)
+        Mappy.ButtonFaderAlpha = pAlpha
+        Mappy:SetButtonsAlpha()
+    end)
+	self:UpdateButtonAutoHide()
+
+    local vDBIcon = LibStub("LibDBIcon-1.0", true)
+    if vDBIcon then
+        -- Mappy's button mouseover option replaces LibDBIcon's
+        for _, vName in ipairs(vDBIcon:GetButtonList()) do
+            self:DisableLibDBIconMouseover(vDBIcon, vName)
+        end
+        -- Also when an addon turns it on later
+        hooksecurefunc(vDBIcon, "ShowOnEnter", function(_, pName, pEnable)
+            if pEnable then
+                Mappy:DisableLibDBIconMouseover(vDBIcon, pName)
+                Mappy:SetButtonsAlpha()
+            end
+        end)
+    end
+
+    -- Reapply addon positioning and minimap size after Edit Mode exit
     hooksecurefunc(EditModeManagerFrame, "ExitEditMode", self.EditModeExit)
 
-    -- Apply Edit Mode positioning on enter to avoid positioning issues
+    -- Apply Edit Mode positioning on enter to avoid positioning issues (select frames only)
     hooksecurefunc(EditModeManagerFrame, "EnterEditMode", self.EditModeEnter)
+
+    -- Reapply addon positioning after Blizzard reapplies the Edit Mode layout (level up etc)
+    hooksecurefunc(EditModeManagerFrame, "UpdateLayoutInfo", self.EditModeLayoutUpdated)
+
+    -- Stop minimap rotation
+    self:StopMinimapRotation()
+    -- Also when settings change
+    self.EventLib:RegisterEvent("CVAR_UPDATE", self.CVarUpdated, self)
+
+    if Mappy.FarmHudEnabled then
+        -- Stop rotation and restore Mappy's alpha when FarmHud's HUD hides
+        FarmHud:HookScript("OnHide", function()
+            -- It also hides with the UI, but keeps the minimap in the HUD then
+            if not Mappy:IsMinimapInFarmHud() then
+                Mappy:StopMinimapRotation()
+                Mappy:ApplyMinimapAlpha(Mappy.MinimapFaderAlpha)
+            end
+        end)
+
+        -- Let FarmHud keep frames anchored to the minimap in place while the HUD is shown
+        FarmHud:RegisterForeignAddOnObject(MinimapCluster, gAddonName)
+    end
+
+    if Mappy.ImmersionEnabled then
+        -- Let the minimap follow UI fades
+        self:ClearIgnoreParentAlpha()
+
+        -- Clear it again when Immersion's "Hide minimap" is unticked
+        local vHideMinimapSetting = "IMMERSION_hideminimap"
+        if Settings.GetSetting(vHideMinimapSetting) then
+            Settings.SetOnValueChangedCallback(vHideMinimapSetting, function(_, _, pHide)
+                if not pHide then
+                    Mappy:ClearIgnoreParentAlpha()
+                end
+            end)
+        else
+            self:ErrorMessage("Please update Immersion, this version doesn't fully work with Mappy. If it's already up to date, please report this on Mappy Continued's GitHub page.")
+        end
+    end
+
+    -- TODO: Remove guard once 12.1.7 is live
+    if MinimapCluster.UpdateMinimapConfig then
+        -- Undo the round minimap art whenever rotation changes (Forever client)
+        hooksecurefunc(MinimapCluster, "UpdateMinimapConfig", function() Mappy:RestoreSquareSkin() end)
+        -- Also once now
+        self:RestoreSquareSkin()
+    end
+
+    -- Put the zone text back whenever Edit Mode moves it
+    hooksecurefunc(MinimapCluster, "SetHeaderUnderneath", function() Mappy:AnchorZoneText() end)
+    -- (fufu: the initial anchor is applied by ApplyProtectedInitState)
+
+    -- Clear Blizzard's minimap insets whenever they're set
+    hooksecurefunc(C_Minimap, "SetMinimapInsetInfo", function(pID) Mappy:ClearBlizzardInsets(pID) end)
+    -- Also once now, for insets set before Mappy loaded
+    self:ClearBlizzardInsets()
 
 	self:RegenEnabled()
 
-	-- Schedule the configuration (includes deferred protected-state init)
+    -- Schedule the configuration
 	self.SchedulerLib:ScheduleUniqueTask(0.5, self.ConfigureMinimap, self)
 
 	-- Rescan for minimap buttons created after the initial discovery
@@ -466,6 +591,9 @@ end
 
 -- Apply one-time protected operations that require out-of-combat state
 -- Called from ConfigureMinimap on first successful (non-combat) run
+-- fufu: upstream 73f3d93 deleted this ("Load full Mappy in combat") and moved
+-- the calls inline into InitializeDragging/InitializeSquareShape; the fork
+-- keeps the combat deferral (user decision 2026-11-03).
 function Mappy:ApplyProtectedInitState()
 	if self.ProtectedInitApplied then
 		return
@@ -473,9 +601,8 @@ function Mappy:ApplyProtectedInitState()
 	self.ProtectedInitApplied = true
 
 	-- Hide elements
-	local zoneTextBorder = self:GetZoneTextBorder() -- fufu: 12.1.7 stopgap
-	if zoneTextBorder then
-		zoneTextBorder:Hide()
+	if self.ZoneTextBorder then
+		self.ZoneTextBorder:Hide()
 	end
 	Minimap.ZoomHitArea:Hide()
 
@@ -495,9 +622,7 @@ function Mappy:ApplyProtectedInitState()
 	MinimapBackdrop:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", 4, -4)
 
 	-- Move the zone text to the top and make it wider
-	MinimapCluster.ZoneTextButton:ClearAllPoints()
-	MinimapCluster.ZoneTextButton:SetPoint("BOTTOM", Minimap, "TOP", 0, 4)
-	MinimapCluster.ZoneTextButton:SetSize(180, 12)
+	self:AnchorZoneText()
 
 	-- Move zoom buttons to the corner and raise strata above the backdrop.
 	-- Blizzard anchors both by CENTER (Minimap.xml); adding a TOPLEFT anchor
@@ -520,12 +645,11 @@ function Mappy:FindMinimapButtons()
     for _, vButtonName in ipairs(self.BlizzardButtonNames) do
         self.IgnoreFrames[vButtonName] = true
 
-        local vButton
-        -- filter frame names from frame globals
-        if type(vButtonName) == "string" then
-            vButton = _G[vButtonName]
-        else
-            vButton = vButtonName
+        -- Find the frame by name; nil if missing in this client
+        -- Turn combined names with dots into actual frames ("MinimapCluster.Tracking" etc)
+        local vButton = _G
+        for vKey in vButtonName:gmatch("[^.]+") do
+            vButton = vButton and vButton[vKey]
         end
 
         if vButton then
@@ -569,12 +693,12 @@ function Mappy:RescanMinimapButtons()
 	end
 end
 
-function Mappy:RegisterMinimapButton(pButton, pAlwaysStack)
+function Mappy:RegisterMinimapButton(pButton, pAlwaysStack, pIndex)
 	if self.MinimapButtonsByFrame[pButton] then
 		return
 	end
-	
-	table.insert(self.MinimapButtons, pButton)
+
+	table.insert(self.MinimapButtons, pIndex or #self.MinimapButtons + 1, pButton)
 	self.MinimapButtonsByFrame[pButton] = true
 	
 	for vName, vFunction in pairs(self._MinimapButton) do
@@ -589,10 +713,11 @@ function Mappy:RegisterMinimapButton(pButton, pAlwaysStack)
 end
 
 function Mappy:ConfigureMinimapOptions()
-	-- Show/Hide calls are protected - defer if in combat
-	if InCombatLockdown() then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
-		return
+	-- Forever client
+	if Mappy.IsForeverClient and self.CurrentProfile.StackGroupFinder then
+		self:StackGroupFinder()
+	else
+		self:ReleaseGroupFinder()
 	end
 
 	if self.CurrentProfile.AutoArrangeButtons then
@@ -604,28 +729,24 @@ function Mappy:ConfigureMinimapOptions()
 	if self.CurrentProfile.HideTimeOfDay then
 		GameTimeFrame:Hide()
 	else
-		GameTimeFrame:SetAlpha(1)
 		GameTimeFrame:Show()
 	end
 
 	if self.CurrentProfile.HideZoneName then
         MinimapCluster.ZoneTextButton:Hide()
 	else
-		MinimapCluster.ZoneTextButton:SetAlpha(1)
         MinimapCluster.ZoneTextButton:Show()
 	end
 
 	if self.CurrentProfile.HideTracking then
         MinimapCluster.Tracking:Hide()
 	else
-		MinimapCluster.Tracking:SetAlpha(1)
         MinimapCluster.Tracking:Show()
 	end
 
     if self.CurrentProfile.HideAddonCompartment then
         AddonCompartmentFrame:Hide()
     else
-		AddonCompartmentFrame:SetAlpha(1)
         AddonCompartmentFrame:Show()
     end
 
@@ -635,8 +756,16 @@ function Mappy:ConfigureMinimapOptions()
 		end
 	else
 		if TimeManagerClockButton then
-			TimeManagerClockButton:SetAlpha(1)
 			TimeManagerClockButton:Show()
+		end
+	end
+
+	-- Forever client
+	if MinimapCluster.DielFrame then
+		if self.CurrentProfile.HideDiel then
+			MinimapCluster.DielFrame:Hide()
+		else
+			MinimapCluster.DielFrame:Show()
 		end
 	end
 
@@ -678,6 +807,26 @@ function Mappy:ConfigureMinimapOptions()
 		self:StopGatherFlash()
 	end
 
+	-- Only scalar works on currently selected quest's ring
+	if self.CurrentProfile.HideQuestRing then
+		Minimap:SetQuestBlobRingScalar(0)
+	else
+		Minimap:SetQuestBlobRingScalar(1)
+	end
+
+	-- But only alpha works on the rest
+	if self.CurrentProfile.HideTaskRing then
+		Minimap:SetTaskBlobRingAlpha(0)
+	else
+		Minimap:SetTaskBlobRingAlpha(self.BlobRingAlpha)
+	end
+
+	if self.CurrentProfile.HideArchRing then
+		Minimap:SetArchBlobRingAlpha(0)
+	else
+		Minimap:SetArchBlobRingAlpha(self.BlobRingAlpha)
+	end
+
 	self:AdjustBackgroundStyle()
 end
 
@@ -691,10 +840,63 @@ end
 
 function Mappy:DisableButtonStacking()
 	self.StackingEnabled = false
-	
+
 	for _, vButton in ipairs(self.MinimapButtons) do
 		vButton:Mappy_SetStackingEnabled(false)
 	end
+end
+
+-- Stack the Group Finder eye like a Blizzard button (Forever client)
+function Mappy:StackGroupFinder()
+    if self.MinimapButtonsByFrame[QueueStatusButton] then
+        return
+    end
+
+    local vIndex = 1
+    for vButtonIndex, vButton in ipairs(self.MinimapButtons) do
+        if vButton.Mappy_AlwaysStack then
+            vIndex = vButtonIndex + 1
+        end
+    end
+
+    self:RegisterMinimapButton(QueueStatusButton, true, vIndex)
+    QueueStatusButton:SetScale(1)
+end
+
+-- Give the Group Finder eye back to Edit Mode (Forever client)
+function Mappy:ReleaseGroupFinder()
+    if not self.MinimapButtonsByFrame[QueueStatusButton] then
+        return
+    end
+
+    for vIndex, vButton in ipairs(self.MinimapButtons) do
+        if vButton == QueueStatusButton then
+            table.remove(self.MinimapButtons, vIndex)
+            break
+        end
+    end
+    self.MinimapButtonsByFrame[QueueStatusButton] = nil
+
+    -- Remove the replacements, it will fallback to Blizzard's stuff
+    -- Assigning the originals directly would leave taint
+    QueueStatusButton.SetPoint = nil
+    QueueStatusButton.ClearAllPoints = nil
+    QueueStatusButton.Mappy_SetPoint = nil
+    QueueStatusButton.Mappy_ClearAllPoints = nil
+    QueueStatusButton.Mappy_SavedAnchors = nil
+    QueueStatusButton.Mappy_StackingActive = false
+
+    QueueStatusButton:SetParent(UIParent)
+    -- Keep the eye art under the clicky button area
+    QueueStatusButton.Eye:SetFrameLevel(QueueStatusButton:GetFrameLevel() - 1)
+    QueueStatusButton:SetAlpha(1)
+
+    -- Set Edit Mode size first, the position offsets depend on it
+    -- Guard in case Edit Mode didn't fill the layout info yet (during login)
+    if QueueStatusButton.systemInfo then
+        QueueStatusButton:SetScale(QueueStatusButton:GetSettingValue(Enum.EditModeGroupFinderSetting.Size) / 100)
+        self:ApplyEditModeAnchor(QueueStatusButton)
+    end
 end
 
 -- create borders and enlarge these new mini buttons
@@ -723,8 +925,7 @@ function Mappy:EnlargeMinimalistButtons()
     MailFrameBG:SetPoint("CENTER", MiniMapMailIcon, "CENTER")
     MailFrameBG:SetSize(25,25)
 
-    -- crafting orders
-    -- fufu: 12.1.7 / Forever stopgap: frame may be absent (upstream 5fe8173)
+    -- crafting orders (Retail client)
     if MinimapCluster.IndicatorFrame.CraftingOrderFrame then
         local CraftingOrderFrame = MinimapCluster.IndicatorFrame.CraftingOrderFrame:CreateTexture(nil, "OVERLAY")
         CraftingOrderFrame:SetTexture(136430)
@@ -738,7 +939,7 @@ function Mappy:EnlargeMinimalistButtons()
     end
 
     -- tracking
-    local Tracking = MinimapCluster.Tracking:CreateTexture(nil, "OVERLAY")
+    local Tracking = MinimapCluster.Tracking.Button:CreateTexture(nil, "OVERLAY")
     Tracking:SetTexture(136430)
     Tracking:SetPoint("CENTER", MinimapCluster.Tracking.Button, "CENTER", 10, -10)
     Tracking:SetSize(53,53)
@@ -758,11 +959,54 @@ function Mappy:EnlargeMinimalistButtons()
     AddonCompartmentBG:SetTexture(136467)
     AddonCompartmentBG:SetPoint("CENTER", AddonCompartmentFrame.Text, "CENTER")
     AddonCompartmentBG:SetSize(25,25)
+
+    -- Stop it from shifting on click
+    AddonCompartmentFrame:SetPushedTextOffset(0, 0)
+
+    -- Fill the inside of the borders to cover Blizzard's own button borders (Forever client)
+    if Mappy.IsForeverClient then
+        -- Calendar border is bigger, so its center sits slightly up and left
+        self:ScaleButtonArt(GameTimeFrame, GameTimeFrame, 1.1, -1, 1)
+        self:ScaleButtonArt(AddonCompartmentFrame, AddonCompartmentFrame.Text, 1.25, 0, 0)
+
+        -- TODO: Scale the mail icon too, untested since it only shows with unread mail
+        -- The mail border is anchored to MiniMapMailIcon, so scaling the icon drags the border down and right
+        -- Either accept the shift, or pin the border to the icon's current center first
+    end
+end
+
+-- Center a button's art on its border and scale it
+-- SetAtlas resets the size on every hover and click
+-- But not scale!
+function Mappy:ScaleButtonArt(pButton, pCenter, pScale, pOffsetX, pOffsetY)
+    pButton.StateTexture:ClearAllPoints()
+    pButton.StateTexture:SetPoint("CENTER", pCenter, "CENTER", pOffsetX, pOffsetY)
+    pButton.StateTexture:SetScale(pScale)
+
+    pButton.AddTexture:ClearAllPoints()
+    pButton.AddTexture:SetPoint("CENTER", pCenter, "CENTER", pOffsetX, pOffsetY)
+    pButton.AddTexture:SetScale(pScale)
+end
+
+-- fufu: insecure-safe part only. RegisterForDrag and the Minimap re-anchor
+-- are protected and stay deferred in ApplyProtectedInitState (upstream
+-- 73f3d93 runs them here, in combat too).
+function Mappy:InitializeDragging()
+    -- Save method references for dragging
+    MinimapCluster.Mappy_SetPoint = MinimapCluster.SetPoint
+    MinimapCluster.Mappy_ClearAllPoints = MinimapCluster.ClearAllPoints
+
+    Minimap.Mappy_SetPoint = Minimap.SetPoint
+    Minimap.Mappy_ClearAllPoints = Minimap.ClearAllPoints
+
+    -- Set up drag scripts (RegisterForDrag is deferred)
+    Minimap:SetScript("OnDragStart", function() Mappy:StartMovingMinimap() end)
+    Minimap:SetScript("OnDragStop", function() Mappy:StopMovingMinimap() end)
 end
 
 function Mappy:AdjustBackgroundStyle()
 	if self.CurrentProfile.HideBorder then
-				MinimapBackdrop:SetBackdropBorderColor(0.75, 0.75, 0.75, 0.0)
+		MinimapBackdrop:SetBackdropBorderColor(0.75, 0.75, 0.75, 0.0)
 		MinimapBackdrop:SetBackdropColor(0.15, 0.15, 0.15, 0.0, 0.0)
 	else
 		MinimapBackdrop:SetBackdropBorderColor(0.75, 0.75, 0.75)
@@ -770,10 +1014,19 @@ function Mappy:AdjustBackgroundStyle()
 	end
 end
 
--- Combat-safe portion only
--- Protected positioning ops are in ApplyProtectedInitState()
 function Mappy:InitializeSquareShape()
-	Minimap:SetMaskTexture("Interface\\Addons\\Mappy-fufu\\Textures\\MinimapMask")
+	Minimap:SetMaskTexture(self.MinimapMaskPath)
+
+	-- Pre-load ring textures into engine cache for Set*BlobRingTexture
+	local vRingPreloader = Minimap:CreateTexture(nil, "BACKGROUND")
+	vRingPreloader:SetTexture(self.SquareQuestRingPath)
+	vRingPreloader:SetTexture(self.SquareTaskRingPath)
+	vRingPreloader:SetTexture(self.SquareArchRingPath)
+	vRingPreloader:SetTexture(nil)
+	Minimap:SetQuestBlobRingTexture(self.SquareQuestRingPath)
+	Minimap:SetTaskBlobRingTexture(self.SquareTaskRingPath)
+	Minimap:SetArchBlobRingTexture(self.SquareArchRingPath)
+
     MinimapCompassTexture:SetTexture(nil)
 
 	-- 10/14/2020 - Updated code to use the new Backdrop templates -LynchburgJack
@@ -787,11 +1040,14 @@ function Mappy:InitializeSquareShape()
 		vStaticOverlay:ClearAllPoints()
 		vStaticOverlay:SetAllPoints(Minimap)
 		vStaticOverlay:SetDrawLayer("BACKGROUND")
-		vStaticOverlay:SetTexture("Interface\\Addons\\Mappy-fufu\\Textures\\UIHudMinimapHousingIndoorStaticBg")
+		vStaticOverlay:SetTexture(self.HousingIndoorBgPath)
 		-- Prevent overwriting with atlas area
 		vStaticOverlay.SetAtlas = function() end
 		MinimapBackdrop.StaticOverlayTexture = vStaticOverlay
 	end
+
+    -- Blizzard re-anchors this button through MinimapBackdrop
+    MinimapBackdrop.ExternalEventURLButton = MinimapBackdrop:GetParent().ExternalEventURLButton
 
 	MinimapBackdrop.backdropInfo = {
 		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -807,7 +1063,70 @@ function Mappy:InitializeSquareShape()
     MinimapZoneText:SetAllPoints(MinimapCluster.ZoneTextButton)
     MinimapZoneText:SetJustifyH("CENTER")
 
+    -- Use retail's zone text size (to override Forever's smaller font)
+    MinimapZoneText:SetFont(GameFontNormal:GetFont())
+
+    -- fufu: backdrop anchors + zoom-button placement stay in
+    -- ApplyProtectedInitState (deferred out of combat, and the zoom buttons
+    -- get ClearAllPoints first -- without it the CENTER+TOPLEFT double anchor
+    -- stretches them into a giant "+"/"-", see 6834bfd).
+
 	MinimapBackdrop:ApplyBackdrop()
+end
+
+-- Stop minimap rotation
+-- But let FarmHud do whatever
+function Mappy:StopMinimapRotation()
+    if not self:IsMinimapInFarmHud() and GetCVarBool("rotateMinimap") then
+		SetCVar("rotateMinimap", false)
+	end
+end
+
+-- Edit Mode writes the setting at login and whenever it's changed
+function Mappy:CVarUpdated(pEventID, pName)
+	if pName == "rotateMinimap" then
+		self:StopMinimapRotation()
+	end
+end
+
+-- Undo the round mask and frame art applied on rotation changes (Forever client)
+function Mappy:RestoreSquareSkin()
+	Minimap:SetMaskTexture(self.MinimapMaskPath)
+	MinimapCompassTexture:SetTexture(nil)
+	MinimapCompassTextureUnderlay:Hide()
+end
+
+-- Immersion makes the minimap ignore UI fades unless its "Hide minimap" is ticked
+function Mappy:ClearIgnoreParentAlpha()
+    Minimap:SetIgnoreParentAlpha(false)
+    MinimapCluster:SetIgnoreParentAlpha(false)
+end
+
+-- Move the zone text to the top and make it wider
+function Mappy:AnchorZoneText()
+    MinimapCluster.ZoneTextButton:ClearAllPoints()
+    MinimapCluster.ZoneTextButton:SetPoint("BOTTOM", Minimap, "TOP", 0, 4)
+    MinimapCluster.ZoneTextButton:SetSize(180, 12)
+end
+
+-- Clear Blizzard's minimap insets for buttons Mappy moves
+function Mappy:ClearBlizzardInsets(pID)
+    -- TODO: Remove once 12.1.7 is live and Forever has named insets
+    -- Before 12.1.7 there's one unnamed inset, only set for the expansion button
+    if not (MinimapUtil and MinimapUtil.UpdateInsetForFrame) then
+        C_Minimap.ClearMinimapInsetInfo()
+        return
+    end
+
+    if pID then
+        if self.BlizzardInsetIDs[pID] then
+            C_Minimap.ClearMinimapInsetInfo(pID)
+        end
+    else
+        for vID in pairs(self.BlizzardInsetIDs) do
+            C_Minimap.ClearMinimapInsetInfo(vID)
+        end
+    end
 end
 
 function Mappy:SetCounterClockwise(pCCW)
@@ -826,13 +1145,7 @@ end
 function Mappy:GhostMinimap()
 	self.CurrentProfile.GhostMinimap = true
 
-	-- Protected ops (EnableMouse, RegisterForDrag) - defer if in combat
-	if InCombatLockdown() then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
-		return
-	end
-
-    if not (Mappy.FarmHudEnabled and FarmHud:IsVisible()) then
+    if not self:IsMinimapInFarmHud() then
 	    Minimap:RegisterForDrag()
 	    Minimap:EnableMouse(false)
 
@@ -846,13 +1159,7 @@ end
 function Mappy:UnghostMinimap()
 	self.CurrentProfile.GhostMinimap = false
 
-	-- Protected ops (EnableMouse, RegisterForDrag) - defer if in combat
-	if InCombatLockdown() then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
-		return
-	end
-
-    if not (Mappy.FarmHudEnabled and FarmHud:IsVisible()) then
+    if not self:IsMinimapInFarmHud() then
         Minimap:RegisterForDrag("LeftButton")
         Minimap:EnableMouse(true)
 
@@ -909,12 +1216,17 @@ function Mappy:LoadProfile(pProfile)
 	local vProfileChanged = self.CurrentProfile ~= pProfile
 	
 	self.CurrentProfile = pProfile
-	
+	self:UpdateButtonAutoHide()
+
 	if vProfileChanged then
 		if self.OptionsPanel:IsVisible() then
 			self.OptionsPanel:OnShow()
 		end
-		
+
+		if self.AppearancePanel:IsVisible() then
+			self.AppearancePanel:OnShow()
+		end
+
 		if self.ButtonOptionsPanel:IsVisible() then
 			self.ButtonOptionsPanel:OnShow()
 		end
@@ -932,7 +1244,12 @@ function Mappy:ExecuteCommand(pCommand)
 	
 	if not vCommand then
         if Mappy.SettingsCategory then
-            Settings.OpenToCategory(Mappy.SettingsCategory:GetID())
+            -- Opening settings is restricted in combat
+            if InCombatLockdown() then
+                self:ErrorMessage("Cannot open settings during combat.")
+            else
+                Settings.OpenToCategory(Mappy.SettingsCategory:GetID())
+            end
         end
 		return
 	end
@@ -1063,10 +1380,6 @@ function Mappy:reset(pParameter)
 	self:LoadProfile(gMappyFufu_Settings.Profiles.DEFAULT)
 end
 
-function Mappy:gcompact()
-	self:CompactGatherer()
-end
-
 function Mappy:BeginStackingButtons()
 	if self.CurrentProfile.StackToScreen then
 		self.StackingInfo.StackingParent = UIParent
@@ -1079,7 +1392,7 @@ function Mappy:BeginStackingButtons()
 			self.StackingInfo.StackingInsetY = 24
 		end
 	else
-        if Mappy.FarmHudEnabled and FarmHud:IsVisible() then
+        if self:IsMinimapInFarmHud() then
             self.StackingInfo.StackingParent = FarmHudMinimapDummy
         else
 		    self.StackingInfo.StackingParent = Minimap
@@ -1112,8 +1425,14 @@ function Mappy:StackButton(pButton, pNextButton)
     -- Check if mini button and add more space for border if yes
     if tableContains(self.BlizzardMinimalistButtons, pButton) then
         vButtonSize = vButtonSize + 16
-        MiniOffsetH = -16
-        MiniOffsetV = -16
+        -- Room for both borders after another mini button, otherwise only for this one
+        if tableContains(self.BlizzardMinimalistButtons, self.StackingInfo.PreviousButton) then
+            MiniOffsetH = -16
+            MiniOffsetV = -16
+        else
+            MiniOffsetH = -7
+            MiniOffsetV = -7
+        end
     elseif tableContains(self.BlizzardMinimalistButtons, self.StackingInfo.PreviousButton) then
         -- Correct offset if previous button was mini, but current button is not
         if self.StackingInfo.PreviousButton == MinimapCluster.InstanceDifficulty then
@@ -1132,6 +1451,34 @@ function Mappy:StackButton(pButton, pNextButton)
 		vSpaceUsed = vButtonSize + self.StackingInfo.CornerInfo.ButtonGap
 	end
 
+    -- Jump past the clock if this button would cover it
+    if self.StackingInfo.Corner:sub(1, 6) == "BOTTOM"
+    and not self.StackingInfo.CornerInfo.IsVert
+    and self.StackingInfo.StackingParent == Minimap
+    and self.StackingInfo.PreviousButton
+    and TimeManagerClockButton
+    and TimeManagerClockButton:IsVisible() then
+        if self.CurrentProfile.CCW then
+            if self.StackingInfo.PreviousButton:GetRight() < TimeManagerClockButton:GetRight()
+            and self.StackingInfo.PreviousButton:GetRight() + vSpaceUsed > TimeManagerClockButton:GetLeft() then
+                local vGapWidth = TimeManagerClockButton:GetLeft() - self.StackingInfo.PreviousButton:GetRight()
+                local vClockButtonWidth = TimeManagerClockButton:GetWidth()
+
+                self.StackingInfo.PreviousButton = TimeManagerClockButton
+                self.StackingInfo.SpaceRemaining = self.StackingInfo.SpaceRemaining - vClockButtonWidth - vGapWidth
+            end
+        else
+            if self.StackingInfo.PreviousButton:GetLeft() > TimeManagerClockButton:GetLeft()
+            and self.StackingInfo.PreviousButton:GetLeft() - vSpaceUsed < TimeManagerClockButton:GetRight() then
+                local vGapWidth = self.StackingInfo.PreviousButton:GetLeft() - TimeManagerClockButton:GetRight()
+                local vClockButtonWidth = TimeManagerClockButton:GetWidth()
+
+                self.StackingInfo.PreviousButton = TimeManagerClockButton
+                self.StackingInfo.SpaceRemaining = self.StackingInfo.SpaceRemaining - vClockButtonWidth - vGapWidth
+            end
+        end
+    end
+
 	-- See if there's going to be room for the next button
 
 	if pNextButton then
@@ -1142,34 +1489,7 @@ function Mappy:StackButton(pButton, pNextButton)
         end
 
 		local	vSpaceNeeded = vSpaceUsed + vNextButtonSize / 2
-		
-		if self.StackingInfo.Corner:sub(1, 6) == "BOTTOM"
-		and not self.StackingInfo.CornerInfo.IsVert
-		and self.StackingInfo.StackingParent == Minimap
-		and self.StackingInfo.PreviousButton
-		and TimeManagerClockButton
-		and TimeManagerClockButton:IsVisible() then
-			if self.CurrentProfile.CCW then
-				if self.StackingInfo.PreviousButton:GetRight() < TimeManagerClockButton:GetRight()
-				and self.StackingInfo.PreviousButton:GetRight() + vSpaceUsed > TimeManagerClockButton:GetLeft() then
-					local vGapWidth = TimeManagerClockButton:GetLeft() - self.StackingInfo.PreviousButton:GetRight()
-					local vClockButtonWidth = TimeManagerClockButton:GetWidth()
-					
-					self.StackingInfo.PreviousButton = TimeManagerClockButton
-					self.StackingInfo.SpaceRemaining = self.StackingInfo.SpaceRemaining - vClockButtonWidth - vGapWidth
-				end
-			else
-				if self.StackingInfo.PreviousButton:GetLeft() > TimeManagerClockButton:GetLeft()
-				and self.StackingInfo.PreviousButton:GetLeft() - vSpaceUsed < TimeManagerClockButton:GetRight() then
-					local vGapWidth = self.StackingInfo.PreviousButton:GetLeft() - TimeManagerClockButton:GetRight()
-					local vClockButtonWidth = TimeManagerClockButton:GetWidth()
-					
-					self.StackingInfo.PreviousButton = TimeManagerClockButton
-					self.StackingInfo.SpaceRemaining = self.StackingInfo.SpaceRemaining - vClockButtonWidth - vGapWidth
-				end
-			end
-		end
-		
+
 		if self.StackingInfo.SpaceRemaining < vSpaceNeeded then
 			-- Change the stacking direction and corner
 			
@@ -1201,22 +1521,20 @@ function Mappy:StackButton(pButton, pNextButton)
     end
 
 	-- Stack the button
-	
-	MinimapCluster:SetAlpha(1)
-	
+
 	pButton:SetParent(MinimapCluster)
 	pButton:SetAlpha(1)
 	Mappy.SetFrameLevel(pButton, self.StackingInfo.ButtonFrameLevel)
-	
+
 	if not pButton.Mappy_ClearAllPoints then
 		self:DebugMark()
 		self:DebugMessage("Mappy_ClearAllPoints is nil.  Name is %s", pButton:GetName() or "nil")
 		self:DebugTable("pButton", pButton)
 		self:DebugStack()
 	end
-	
+
 	pButton:Mappy_ClearAllPoints()
-	
+
 	if not self.StackingInfo.PreviousButton then
 		pButton:Mappy_SetPoint(
 				"CENTER",
@@ -1224,7 +1542,7 @@ function Mappy:StackButton(pButton, pNextButton)
 				self.StackingInfo.Corner,
 				self.StackingInfo.CornerInfo.HorizInsetDir * self.StackingInfo.StackingInsetX,
 				self.StackingInfo.CornerInfo.VertInsetDir * self.StackingInfo.StackingInsetY)
-		
+
 		self.StackingInfo.PreviousButton = pButton
 	else
 		pButton:Mappy_SetPoint(
@@ -1234,7 +1552,7 @@ function Mappy:StackButton(pButton, pNextButton)
 				self.StackingInfo.CornerInfo.HorizGap + MiniOffsetH,
                 self.StackingInfo.CornerInfo.VertGap + MiniOffsetV)
 	end
-	
+
 	self.StackingInfo.SpaceRemaining = self.StackingInfo.SpaceRemaining - vSpaceUsed
 	self.StackingInfo.PreviousButton = pButton
 end
@@ -1264,6 +1582,14 @@ function Mappy:SetMinimapMovingAlpha(pAlpha)
 	
 	self.CurrentProfile.MinimapMovingAlpha = pAlpha
 	self:AdjustAlpha(pAlpha)
+end
+
+function Mappy:SetMinimapHoverOpaque(pValue)
+	if self.DisableUpdates then
+		return
+	end
+
+	self.CurrentProfile.MinimapHoverOpaque = pValue
 end
 
 function Mappy:SetMinimapSize(pSize)
@@ -1305,14 +1631,24 @@ function Mappy:BeginConfigurePass()
 	return vPass
 end
 
+function Mappy:OverrideEditModeSize()
+    -- Override Edit Mode size
+    MinimapCluster.MinimapContainer:SetScale(1)
+
+    -- Override day/night button scaling (Forever client)
+    if MinimapCluster.DielFrame then
+        MinimapCluster.DielFrame:SetScale(1)
+    end
+
+    -- Override Group Finder eye scaling while stacked (Forever client)
+    if self.MinimapButtonsByFrame[QueueStatusButton] then
+        QueueStatusButton:SetScale(1)
+    end
+end
+
 function Mappy:ConfigureMinimap()
 	-- Bail out if the minimap is in a protected state
 	if MinimapCluster:IsProtected() and not MinimapCluster:CanChangeProtectedState() then
-		return
-	end
-
-    -- Combat is a no-no
-	if InCombatLockdown() then
 		return
 	end
 
@@ -1348,20 +1684,26 @@ function Mappy:ConfigureMinimap()
             EditModeManagerFrame.layoutInfo.activeLayout)
     end
 
-    if not (Mappy.FarmHudEnabled and FarmHud:IsVisible()) then
+    self:OverrideEditModeSize()
+
+    -- Recalculate the Group Finder's default position at Mappy's scale (Forever client)
+    EventRegistry:TriggerEvent("Minimap.OnScaleUpdated", 1)
+
+    if not self:IsMinimapInFarmHud() then
 	    Minimap:SetWidth(self.CurrentProfile.MinimapSize)
 	    Minimap:SetHeight(self.CurrentProfile.MinimapSize)
+
+        -- Move LibDBIcon buttons to the new border
+        local vDBIcon = LibStub("LibDBIcon-1.0", true)
+        if vDBIcon then
+            vDBIcon:SetButtonRadius(vDBIcon.radius)
+        end
     end
 
 	MinimapCluster:SetWidth(self.CurrentProfile.MinimapSize)
 	MinimapCluster:SetHeight(self.CurrentProfile.MinimapSize)
 
-	for vMapArrow, _ in pairs(self.LandmarkArrows) do
-		vMapArrow.Mappy.SetWidth(vMapArrow, self.CurrentProfile.MinimapSize * 1.1)
-		vMapArrow.Mappy.SetHeight(vMapArrow, self.CurrentProfile.MinimapSize * 1.1)
-	end
-
-    if not (Mappy.FarmHudEnabled and FarmHud:IsVisible()) then
+    if not self:IsMinimapInFarmHud() then
 	    Minimap:SetScale(1.001) -- Poke the scaling to force a refresh of the minimap size
 	    Minimap:SetScale(1)
     end
@@ -1397,6 +1739,20 @@ function Mappy:ConfigureMinimap()
         self.CoordString:SetTextScale(self.CurrentProfile.CoordSize or 1)
     end
 
+	-- fufu: pass log stays here; upstream 106adfe moved stacking into
+	-- StackMinimapButtons, which has no vPass in scope (it is also called
+	-- outside a pass, e.g. from EditModeEnter on Forever).
+	vPass.PreStack = debugprofilestop() - vPass.Start
+
+	vPass.Buttons = self:StackMinimapButtons()
+	self:AdjustAlpha()
+
+	vPass.Total = debugprofilestop() - vPass.Start
+	self.ConfigurePassTime = nil
+end
+
+-- Returns the number of buttons stacked (fufu: for the /mappy perf pass log)
+function Mappy:StackMinimapButtons()
     if GameTimeFrame then
         GameTimeFrame:ClearAllPoints()
     end
@@ -1409,16 +1765,14 @@ function Mappy:ConfigureMinimap()
     if MinimapCluster.Tracking then
          MinimapCluster.Tracking:ClearAllPoints()
     end
-    if AddonCompartment then
-        AddonCompartment:ClearAllPoints()
+    if AddonCompartmentFrame then
+        AddonCompartmentFrame:ClearAllPoints()
     end
     if MinimapCluster.InstanceDifficulty then
         MinimapCluster.InstanceDifficulty:ClearAllPoints()
     end
 
 	-- Stack all the known buttons
-
-	vPass.PreStack = debugprofilestop() - vPass.Start
 
 	self:BeginStackingButtons()
 
@@ -1428,7 +1782,7 @@ function Mappy:ConfigureMinimap()
 	for _, vNextButton in pairs(self.MinimapButtons) do
 
         -- handle special case (avoid showing empty box)
-        if vButton == MinimapCluster.InstanceDifficulty then
+        if vButton and vButton == MinimapCluster.InstanceDifficulty then
             local _, instanceType, difficulty, _, _, _, _, _, _ = GetInstanceInfo()
 
             if not difficulty or not ( instanceType == "raid"
@@ -1443,6 +1797,11 @@ function Mappy:ConfigureMinimap()
             end
         end
 
+        -- TODO: Do the same for Delves but with their special stupid function checker
+        -- since they don't work with GetInstanceInfo()
+        -- Reuse my Delve code I did for DynamicCam situations PR
+        -- Otherwise it stays empty on exiting the Delve and it pisses me off
+
 		if vNextButton.Mappy_SetPoint then
 			if vButton and vButton:IsVisible() then
 				self:StackButton(vButton, vNextButton)
@@ -1450,6 +1809,10 @@ function Mappy:ConfigureMinimap()
 			end
 
 			vButton = vNextButton
+        else
+            -- Unarranged buttons get the same parent and level as stacked ones
+            vNextButton:SetParent(MinimapCluster)
+            Mappy.SetFrameLevel(vNextButton, self.StackingInfo.ButtonFrameLevel)
 		end
 	end
 
@@ -1458,11 +1821,15 @@ function Mappy:ConfigureMinimap()
 		vStacked = vStacked + 1
 	end
 
-	self:AdjustAlpha()
+	-- Keep the Group Finder eye art under the clicky button area (Forever client)
+	if self.MinimapButtonsByFrame[QueueStatusButton] then
+		QueueStatusButton.Eye:SetFrameLevel(QueueStatusButton:GetFrameLevel() - 1)
+	end
 
-	vPass.Buttons = vStacked
-	vPass.Total = debugprofilestop() - vPass.Start
-	self.ConfigurePassTime = nil
+	-- Stacking sets buttons to full alpha, fade them back
+    self:SetButtonsAlpha()
+
+	return vStacked
 end
 
 function Mappy:GetUIObjectDescription(pUIObject)
@@ -1686,7 +2053,16 @@ function Mappy:Update()
 		self.wasResting = vResting
 		self:AdjustAlpha()
 	end
-	
+
+	if self.CurrentProfile.MinimapHoverOpaque or self.CurrentProfile.AutoHideButtons then
+		local vMouseOver = self:IsMouseOverMinimapArea()
+		if self.IsHovering ~= vMouseOver then
+			self.IsHovering = vMouseOver
+			self:AdjustAlpha()
+			self:UpdateButtonAutoHide()
+		end
+	end
+
 	-- Update the coords
 	if not self.CurrentProfile.HideCoordinates then
 		self:UpdateCoords()
@@ -1708,15 +2084,56 @@ function Mappy:UpdateCoords()
     end
 end
 
+-- Set the map, zone name and clock alpha, and update the buttons
+function Mappy:ApplyMinimapAlpha(pAlpha)
+    self.MinimapFaderAlpha = pAlpha
+    Minimap:SetAlpha(pAlpha)
+    MinimapCluster.ZoneTextButton:SetAlpha(pAlpha)
+    if TimeManagerClockButton then
+        TimeManagerClockButton:SetAlpha(pAlpha)
+    end
+    self:SetButtonsAlpha()
+end
+
+function Mappy:FadeAlphaTo(pTargetAlpha)
+    -- Already there or on the way
+    if self.FadeTarget == pTargetAlpha then
+        return
+    end
+
+    self.FadeTarget = pTargetAlpha
+
+    local vFadeInfo = {}
+    vFadeInfo.mode = "IN"
+    vFadeInfo.startAlpha = self.MinimapFaderAlpha
+    vFadeInfo.endAlpha = pTargetAlpha
+    vFadeInfo.timeToFade = self.FadeDuration
+    vFadeInfo.finishedFunc = self.OnFadeFinished
+    vFadeInfo.finishedArg1 = self
+
+    -- UIFrameFade calls Show(), so fade a helper frame instead of the minimap
+    UIFrameFade(self.MinimapFader, vFadeInfo)
+end
+
+function Mappy:OnFadeFinished()
+	-- Fudge the zoom to force the minimap to re-paint
+	local vMinimapZoom = Minimap:GetZoom()
+	if vMinimapZoom > 0 then
+		Minimap:SetZoom(vMinimapZoom - 1)
+	else
+		Minimap:SetZoom(vMinimapZoom + 1)
+	end
+	Minimap:SetZoom(vMinimapZoom)
+end
+
 function Mappy:AdjustAlpha(pForceAlpha)
 	if pForceAlpha then
-		Minimap:SetAlpha(pForceAlpha)
-		if self.MappyPlayerArrow then
-			self.MappyPlayerArrow:SetAlpha(1 - pForceAlpha)
-		end
+        UIFrameFadeRemoveFrame(self.MinimapFader)
+        self.FadeTarget = pForceAlpha
+        self.MinimapFader:SetAlpha(pForceAlpha)
 	else
 		local vAlpha
-		
+
 		if self.InCombat and not self.IsMounted then
 			vAlpha = self.CurrentProfile.MinimapCombatAlpha or 0.2
 		elseif self.IsMoving then
@@ -1724,34 +2141,23 @@ function Mappy:AdjustAlpha(pForceAlpha)
 		else
 			vAlpha = self.CurrentProfile.MinimapAlpha or 1
 		end
-		
+
 		-- Force the alpha to 1 if we're indoors.  The minimap doesn't work
 		-- properly if the alpha isn't 1 (it'll just show solid black) while
 		-- indoors (in this case, indoors means any major city, inside any building, any dungeon)
 		-- Detection of 'indoors' is imperfect however, so there are still times that the minimap
 		-- will go black when you don't want it to
-		
+
 		local forceToOpaque = self:ShouldForceMapToOpaque()
 		if vAlpha > 0 and forceToOpaque then
 			vAlpha = 1
 		end
 
-		if Minimap:GetAlpha() ~= vAlpha then
-			Minimap:SetAlpha(vAlpha)
-
-			if self.MappyPlayerArrow then
-				self.MappyPlayerArrow:SetAlpha(1 - vAlpha)
-			end
-
-			-- Fudge the zoom to force the minimap to re-paint
-			local minimapZoom = Minimap:GetZoom()
-			if minimapZoom > 0 then
-				Minimap:SetZoom(minimapZoom - 1)
-			else
-				Minimap:SetZoom(minimapZoom + 1)
-			end
-			Minimap:SetZoom(minimapZoom)
+		if self.IsHovering and self.CurrentProfile.MinimapHoverOpaque and vAlpha < 1 then
+			vAlpha = 1
 		end
+
+		self:FadeAlphaTo(vAlpha)
 	end
 end
 
@@ -1794,11 +2200,40 @@ function Mappy:StoppedMoving()
 	self:AdjustAlpha()
 end
 
+function Mappy:IsMouseOverMinimapArea()
+	if MinimapCluster:IsMouseOver()
+	or (MinimapCluster.ZoneTextButton:IsVisible() and MinimapCluster.ZoneTextButton:IsMouseOver())
+	or (TimeManagerClockButton:IsVisible() and TimeManagerClockButton:IsMouseOver()) then
+		return true
+	end
+
+	for _, vButton in ipairs(self.MinimapButtons) do
+		if vButton:IsVisible() and vButton:IsMouseOver() then
+			return true
+		end
+	end
+
+	return false
+end
+
+function Mappy:MinimapOnEnter()
+	self.IsHovering = true
+	self:AdjustAlpha()
+	self:UpdateButtonAutoHide()
+end
+
+function Mappy:MinimapOnLeave()
+	if (self.CurrentProfile.MinimapHoverOpaque or self.CurrentProfile.AutoHideButtons) and self:IsMouseOverMinimapArea() then
+		return
+	end
+	self.IsHovering = false
+	self:AdjustAlpha()
+	self:UpdateButtonAutoHide()
+end
+
 function Mappy:TalentChanged()
-    -- Restore Mappy positioning
-    if gMappyFufu_Settings.Position.UseAddonPosition then
-        Mappy:LoadProfile(Mappy.CurrentProfile)
-    end
+    -- Restore Mappy positioning and size
+    Mappy:LoadProfile(Mappy.CurrentProfile)
 end
 
 function Mappy:EditModeExit()
@@ -1815,9 +2250,32 @@ function Mappy:EditModeExit()
 end
 
 function Mappy:EditModeEnter()
+    -- Move the minimap to its Edit Mode position
+    -- (fufu: upstream 106adfe replaced the addon-initiated
+    -- C_EditMode.SetActiveLayout with a read-only anchor copy; position is global)
     if gMappyFufu_Settings.Position.UseAddonPosition then
-        C_EditMode.SetActiveLayout(
-            EditModeManagerFrame.layoutInfo.activeLayout)
+        Mappy:ApplyEditModeAnchor(MinimapCluster)
+    end
+
+    -- Let Edit Mode move the Group Finder eye, it's restacked on exit
+    -- Forever client
+    if Mappy.MinimapButtonsByFrame[QueueStatusButton] then
+        Mappy:ReleaseGroupFinder()
+        Mappy:StackMinimapButtons()
+    end
+end
+
+function Mappy:EditModeLayoutUpdated()
+    -- Addon positioning only, ConfigureMinimap's SetActiveLayout would loop back here
+    if gMappyFufu_Settings.Position.UseAddonPosition then
+        -- Undo Edit Mode's position and size instantly (unless editing)
+        -- No scheduler to avoid one frame visual bounce between positions
+        if not EditModeManagerFrame:IsEditModeActive() then
+            Mappy:SetFramePosition(MinimapCluster, gMappyFufu_Settings.Position)
+            Mappy:OverrideEditModeSize()
+        end
+
+        Mappy:LoadProfile(Mappy.CurrentProfile)
     end
 end
 
@@ -1855,80 +2313,53 @@ end
 function Mappy:SetHideTracking(pHide)
 	if pHide then
 		self.CurrentProfile.HideTracking = true
-		MinimapCluster.Tracking:SetAlpha(0)
+        MinimapCluster.Tracking:Hide()
 	else
 		self.CurrentProfile.HideTracking = nil
-		MinimapCluster.Tracking:SetAlpha(1)
-	end
-	-- Real Show/Hide are protected - defer if in combat
-	if InCombatLockdown() then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
-		return
-	end
-	if pHide then
-		MinimapCluster.Tracking:Hide()
-	else
-		MinimapCluster.Tracking:Show()
+        MinimapCluster.Tracking:Show()
 	end
 end
 
 function Mappy:SetHideAddonCompartment(pHide)
     if pHide then
         self.CurrentProfile.HideAddonCompartment = true
-        AddonCompartmentFrame:SetAlpha(0)
+        AddonCompartmentFrame:Hide()
     else
         self.CurrentProfile.HideAddonCompartment = nil
-        AddonCompartmentFrame:SetAlpha(1)
+        AddonCompartmentFrame:Show()
     end
-	-- Real Show/Hide are protected - defer if in combat
-	if InCombatLockdown() then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
-		return
-	end
-	if pHide then
-		AddonCompartmentFrame:Hide()
-	else
-		AddonCompartmentFrame:Show()
-	end
 end
 
 function Mappy:SetHideTimeManagerClock(pHide)
 	if pHide then
 		self.CurrentProfile.HideTimeManagerClock = true
-		TimeManagerClockButton:SetAlpha(0)
+        TimeManagerClockButton:Hide()
 	else
 		self.CurrentProfile.HideTimeManagerClock = nil
-		TimeManagerClockButton:SetAlpha(1)
+        TimeManagerClockButton:Show()
 	end
-	-- Real Show/Hide are protected - defer if in combat
-	if InCombatLockdown() then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
-		return
-	end
+
+    -- Restack so the buttons stop or start skipping the clock
+    self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+end
+
+function Mappy:SetHideDiel(pHide)
 	if pHide then
-		TimeManagerClockButton:Hide()
+		self.CurrentProfile.HideDiel = true
+        MinimapCluster.DielFrame:Hide()
 	else
-		TimeManagerClockButton:Show()
+		self.CurrentProfile.HideDiel = nil
+        MinimapCluster.DielFrame:Show()
 	end
 end
 
 function Mappy:SetHideTimeOfDay(pHide)
 	if pHide then
 		self.CurrentProfile.HideTimeOfDay = true
-		GameTimeFrame:SetAlpha(0)
+        GameTimeFrame:Hide()
 	else
 		self.CurrentProfile.HideTimeOfDay = nil
-		GameTimeFrame:SetAlpha(1)
-	end
-	-- Real Show/Hide are protected - defer if in combat
-	if InCombatLockdown() then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
-		return
-	end
-	if pHide then
-		GameTimeFrame:Hide()
-	else
-		GameTimeFrame:Show()
+        GameTimeFrame:Show()
 	end
 end
 
@@ -1966,20 +2397,10 @@ end
 function Mappy:SetHideZoneName(pHide)
 	if pHide then
 		self.CurrentProfile.HideZoneName = true
-		MinimapCluster.ZoneTextButton:SetAlpha(0)
+        MinimapCluster.ZoneTextButton:Hide()
 	else
 		self.CurrentProfile.HideZoneName = nil
-		MinimapCluster.ZoneTextButton:SetAlpha(1)
-	end
-	-- Real Show/Hide are protected - defer if in combat
-	if InCombatLockdown() then
-		self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
-		return
-	end
-	if pHide then
-		MinimapCluster.ZoneTextButton:Hide()
-	else
-		MinimapCluster.ZoneTextButton:Show()
+        MinimapCluster.ZoneTextButton:Show()
 	end
 end
 
@@ -2008,6 +2429,36 @@ end
 function Mappy:SetHideBorder(pHide)
 	self.CurrentProfile.HideBorder = pHide and true or nil
 	self:AdjustBackgroundStyle()
+end
+
+function Mappy:SetHideQuestRing(pHide)
+	if pHide then
+		self.CurrentProfile.HideQuestRing = true
+		Minimap:SetQuestBlobRingScalar(0)
+	else
+		self.CurrentProfile.HideQuestRing = nil
+		Minimap:SetQuestBlobRingScalar(1)
+	end
+end
+
+function Mappy:SetHideTaskRing(pHide)
+	if pHide then
+		self.CurrentProfile.HideTaskRing = true
+		Minimap:SetTaskBlobRingAlpha(0)
+	else
+		self.CurrentProfile.HideTaskRing = nil
+		Minimap:SetTaskBlobRingAlpha(self.BlobRingAlpha)
+	end
+end
+
+function Mappy:SetHideArchRing(pHide)
+	if pHide then
+		self.CurrentProfile.HideArchRing = true
+		Minimap:SetArchBlobRingAlpha(0)
+	else
+		self.CurrentProfile.HideArchRing = nil
+		Minimap:SetArchBlobRingAlpha(self.BlobRingAlpha)
+	end
 end
 
 function Mappy:SetAutoArrangeButtons(pEnable)
@@ -2048,6 +2499,102 @@ function Mappy:RequestReconfigure(pReason)
 	self.SchedulerLib:ScheduleUniqueTask(0.25, self.ConfigureMinimap, self)
 end
 
+function Mappy:SetFadeButtons(pValue)
+	if self.DisableUpdates then return end
+
+	self.CurrentProfile.FadeButtons = pValue
+    self:SetButtonsAlpha()
+end
+
+function Mappy:SetAutoHideButtons(pValue)
+	if self.DisableUpdates then return end
+
+	self.CurrentProfile.AutoHideButtons = pValue
+	self:UpdateButtonAutoHide()
+end
+
+function Mappy:SetStackGroupFinder(pEnable)
+	if pEnable then
+		self.CurrentProfile.StackGroupFinder = true
+	else
+		self.CurrentProfile.StackGroupFinder = nil
+	end
+
+	self.SchedulerLib:ScheduleUniqueTask(0, self.ConfigureMinimap, self)
+end
+
+function Mappy:SetAlwaysShowGroupFinder(pValue)
+	if self.DisableUpdates then return end
+
+	self.CurrentProfile.AlwaysShowGroupFinder = pValue
+    self:SetButtonsAlpha()
+end
+
+-- Show buttons on mouseover, hide after a delay
+function Mappy:UpdateButtonAutoHide()
+	if self.CurrentProfile.AutoHideButtons and not self.IsHovering then
+		self.SchedulerLib:ScheduleUniqueTask(self.ButtonHideDelay, self.HideButtons, self)
+	else
+		self.SchedulerLib:UnscheduleTask(self.HideButtons, self)
+		self:ShowButtons()
+	end
+end
+
+function Mappy:HideButtons()
+	if self.ButtonsHidden then return end
+	self.ButtonsHidden = true
+	self:FadeButtonsTo(0)
+end
+
+function Mappy:ShowButtons()
+	if not self.ButtonsHidden then return end
+	self.ButtonsHidden = false
+	self:FadeButtonsTo(1)
+end
+
+-- Briefly show buttons when a new one appears
+function Mappy:RevealButtons()
+	if not self.CurrentProfile.AutoHideButtons then return end
+
+	self:ShowButtons()
+	if not self.IsHovering then
+		self.SchedulerLib:RescheduleTask(self.ButtonHideDelay, self.HideButtons, self)
+	end
+end
+
+-- UIFrameFade calls Show(), so fade a helper frame instead of the buttons
+-- Avoids unhiding hidden buttons on accident
+function Mappy:FadeButtonsTo(pTargetAlpha)
+	local vFadeInfo = {}
+	vFadeInfo.mode = "IN"
+    vFadeInfo.startAlpha = self.ButtonFaderAlpha
+	vFadeInfo.endAlpha = pTargetAlpha
+	vFadeInfo.timeToFade = self.ButtonFadeDuration
+
+	UIFrameFade(self.ButtonFader, vFadeInfo)
+end
+
+function Mappy:SetButtonsAlpha()
+    -- Buttons follow the minimap alpha unless they ignore the sliders
+    local vMinimapAlpha = self.CurrentProfile.FadeButtons and self.MinimapFaderAlpha or 1
+    for _, vButton in ipairs(self.MinimapButtons) do
+        -- Keep the Group Finder eye visible if enabled (Forever client)
+        if vButton == QueueStatusButton and self.CurrentProfile.AlwaysShowGroupFinder then
+            vButton:SetAlpha(vMinimapAlpha)
+        else
+            vButton:SetAlpha(self.ButtonFaderAlpha * vMinimapAlpha)
+        end
+    end
+end
+
+-- Turn off LibDBIcon's mouseover hide on Mappy's buttons
+function Mappy:DisableLibDBIconMouseover(pDBIcon, pName)
+    local vButton = pDBIcon:GetMinimapButton(pName)
+    if vButton and self.MinimapButtonsByFrame[vButton] then
+        pDBIcon:ShowOnEnter(pName, false)
+    end
+end
+
 function Mappy.Button_OnHide(self, ...)
 	-- Only act when stacking is active (HookScript is permanent, so use flag)
 	if not self.Mappy_StackingActive then
@@ -2080,6 +2627,9 @@ function Mappy.Button_OnShow(self, ...)
 		return
 	end
 
+	Mappy:RevealButtons()
+
+	-- fufu: debounced, never upstream's delay-0 ConfigureMinimap (6834bfd loop)
 	Mappy:RequestReconfigure("show:" .. (self:GetName() or "?"))
 end
 
@@ -2197,10 +2747,6 @@ end
 function Mappy:StartMovingMinimap()
 	if gMappyFufu_Settings.Position.LockPosition
     or not gMappyFufu_Settings.Position.UseAddonPosition then
-		return
-	end
-
-	if InCombatLockdown() then
 		return
 	end
 
@@ -2420,6 +2966,25 @@ function Mappy:SetFramePosition(pFrame, pPosition)
 	end
 end
 
+-- Move a frame to its saved Edit Mode position
+-- Same math as Blizzard's ApplySystemAnchor, without calling into Edit Mode
+function Mappy:ApplyEditModeAnchor(pFrame)
+    local vSystemInfo = pFrame.systemInfo
+    if not vSystemInfo then
+        return
+    end
+
+    local vClearAllPoints = pFrame.Mappy_ClearAllPoints or pFrame.ClearAllPoints
+    local vSetPoint = pFrame.Mappy_SetPoint or pFrame.SetPoint
+    local vScale = pFrame:GetScale()
+
+    vClearAllPoints(pFrame)
+    for _, vAnchor in ipairs({vSystemInfo.anchorInfo, vSystemInfo.anchorInfo2}) do
+        vSetPoint(pFrame, vAnchor.point, vAnchor.relativeTo, vAnchor.relativePoint,
+            vAnchor.offsetX / vScale, vAnchor.offsetY / vScale)
+    end
+end
+
 function Mappy:PositionChanged()
 	local vPosition = self:GetFramePosition(MinimapCluster)
 	
@@ -2452,130 +3017,14 @@ function Mappy.SetFrameLevel(pFrame, pLevel)
 end
 
 ----------------------------------------
-Mappy.RotatingMinimapArrow = {}
+-- GatherMate support
 ----------------------------------------
 
-function Mappy.RotatingMinimapArrow:Construct(pArrow)
-	-- Do nothing if we've already hooked this one
-	
-	if Mappy.LandmarkArrows[pArrow] then
-		return
-	end
-	
-	-- Save the current values
-	
-	pArrow.Mappy =
-	{
-		SetPosition = pArrow.SetPosition,
-		GetPosition = pArrow.GetPosition,
-		SetWidth = pArrow.SetWidth,
-		GetWidth = pArrow.GetWidth,
-		SetHeight = pArrow.SetHeight,
-		GetHeight = pArrow.GetHeight,
-		
-		Width = pArrow:GetWidth(),
-		Height = pArrow:GetHeight(),
-	}
-	
-	pArrow.Mappy.x, pArrow.Mappy.y, pArrow.Mappy.z = pArrow:GetPosition()
-	
-	-- Hook the model
-	
-	for vName, vFunction in pairs(self) do
-		pArrow[vName] = vFunction
-	end
-	
-	-- Recalculate the current position
-	
-	pArrow.Mappy.SetWidth(pArrow, Mappy.CurrentProfile.MinimapSize)
-	pArrow.Mappy.SetHeight(pArrow, Mappy.CurrentProfile.MinimapSize)
-	
-	pArrow:SetPosition(pArrow.Mappy.x, pArrow.Mappy.y, pArrow.Mappy.z)
-	
-	--
-	
-	Mappy.LandmarkArrows[pArrow] = true
-end
-
-function Mappy.RotatingMinimapArrow:SetPosition(pX, pY, pZ)
-	self.Mappy.x, self.Mappy.y, self.Mappy.z = pX, pY, pZ
-	
-	-- Remap the position
-	
-	local vOrigRight, vOrigTop = self:GetOrigTopRightCoord()
-	local vNewRight, vNewTop = self:GetTopRightCoord()
-	
-	local vX = pX * vNewRight / vOrigRight
-	local vY = pY * vNewTop / vOrigTop
-	
-	-- Mappy:TestMessage("SetPosition: %s, %s, %s from %s, %s to %s, %s resulting in %s, %s, %s", pX, pY, pZ, vOrigRight, vOrigTop, vNewRight, vNewTop, vX, vY, pZ)
-	
-	self.Mappy.SetPosition(self, vX, vY, pZ)
-end
-
-function Mappy.RotatingMinimapArrow:GetPosition()
-	return self.Mappy.x, self.Mappy.y, self.Mappy.z
-end
-
-function Mappy.RotatingMinimapArrow:SetWidth(pWidth)
-	self.Mappy.Width = pWidth
-end
-
-function Mappy.RotatingMinimapArrow:GetWidth()
-	return self.Mappy.Width
-end
-
-function Mappy.RotatingMinimapArrow:SetHeight(pHeight)
-	self.Mappy.Height = pHeight
-end
-
-function Mappy.RotatingMinimapArrow:GetHeight()
-	return self.Mappy.Height
-end
-
-function Mappy.RotatingMinimapArrow:GetTopRightCoord()
-	local vScale = self:GetEffectiveScale()
-	local vHyp = ((GetScreenWidth() * vScale) ^ 2 + (GetScreenHeight() * vScale) ^ 2) ^ 0.5
-	
-	return (self.Mappy.GetWidth(self)) / vHyp, (self.Mappy.GetHeight(self)) / vHyp
-end
-
-function Mappy.RotatingMinimapArrow:GetOrigTopRightCoord()
-	local vScale = self:GetEffectiveScale()
-	local vHyp = ((GetScreenWidth() * vScale) ^ 2 + (GetScreenHeight() * vScale) ^ 2) ^ 0.5
-	
-	return (self.Mappy.Width or 140.8) / vHyp, (self.Mappy.Height or 140.8) / vHyp
-end
-
-function Mappy:GetModelTopRight(pModel)
-	local vScale = pModel:GetEffectiveScale()
-	local vHyp = ((GetScreenWidth() * vScale) ^ 2 + (GetScreenHeight() * vScale) ^ 2) ^ 0.5
-	
-	return (pModel:GetWidth()) / vHyp, (pModel:GetHeight()) / vHyp
-end
-
-----------------------------------------
--- Gatherer support
-----------------------------------------
-
-if Gatherer
-and Gatherer.MiniNotes
-and Gatherer.MiniNotes.UpdateMinimapNotes then
-	Gatherer.MiniNotes.Mappy_UpdateMinimapNotes = Gatherer.MiniNotes.UpdateMinimapNotes
-	
-	function Gatherer.MiniNotes.UpdateMinimapNotes(...)
-		local vResult = {Gatherer.MiniNotes.Mappy_UpdateMinimapNotes(...)}
-		
-		if not InCombatLockdown() then
-			for _, vGatherNote in ipairs(Gatherer.MiniNotes.Notes) do
-				vGatherNote:SetParent(MinimapCluster)
-				vGatherNote:SetFrameLevel(MinimapCluster:GetFrameLevel() + 5)
-			end
-		end
-		
-		return unpack(vResult)
-	end
-end
+-- For some reason 10.1 made this code obsolete
+-- It used to reparent the MiniPin from Minimap to MinimapCluster
+-- But now reparenting places them behind the minimap strata (???)
+-- It works marvelously without reparenting though
+-- I'm leaving this section just in case lol
 
 ----------------------------------------
 -- MBB support
@@ -2593,161 +3042,25 @@ if FarmHud then
     Mappy.FarmHudEnabled = true
 end
 
+-- Check the parent, FarmHud also hides with the UI but keeps the minimap then
+function Mappy:IsMinimapInFarmHud()
+    return Mappy.FarmHudEnabled and Minimap:GetParent() == FarmHud
+end
+
+----------------------------------------
+-- Immersion support
+----------------------------------------
+
+if ImmersionFrame then
+    Mappy.ImmersionEnabled = true
+end
+
 ----------------------------------------
 -- Minimap addon support
 ----------------------------------------
 
 function GetMinimapShape()
 	return "SQUARE"
-end
-
-----------------------------------------
--- Compact the gatherer database (collapses nodes)
-----------------------------------------
-
-local POS_X = 1
-local POS_Y = 2
-local COUNT = 3
-local HARVESTED = 4
-local INSPECTED = 5
-local SOURCE = 6
-
-function Mappy:CompactGatherer()
-	-- Gatherer may not be loaded; bail instead of erroring on a nil deref
-	if not (Gatherer and Gatherer.Storage and Gatherer.Storage.GetRawDataTable
-	and Gatherer.Report and Gatherer.Report.NeedsUpdate) then
-		self:ErrorMessage("gcompact requires the Gatherer addon, which is not loaded")
-		return
-	end
-
-	local vGatherData = Gatherer.Storage.GetRawDataTable()
-	
-	for vContinentIndex, vContinentData in ipairs(vGatherData) do
-		for vZoneID, vZoneData in pairs(vContinentData) do
-			local vNodeBin = self:BuildGathererNodeBin(vZoneData)
-			
-			self:CollapseNearbyGathererNodes(vNodeBin)
-			self:AdjustCollapsedNodePositions(vNodeBin)
-			self:SaveGathererData(vNodeBin, vZoneData)
-		end -- for vZoneID
-	end -- for vContinentIndex
-end
-
-function Mappy:BuildGathererNodeBin(pZoneData)
-	local vNodeBin = {}
-	
-	for vNodeID, vNodeList in pairs(pZoneData) do
-		local vNodeTypeBin = vNodeBin[vNodeList.gtype]
-		
-		if not vNodeTypeBin then
-			vNodeTypeBin = {}
-			vNodeBin[vNodeList.gtype]= vNodeTypeBin
-		end
-		
-		for vNodeIndex, vNodeData in ipairs(vNodeList) do
-			local vColumn2 = math.floor(vNodeData[POS_X] * 1000 + 0.5)
-			local vRow2 = math.floor(vNodeData[POS_Y] * 1000 + 0.5)
-			
-			local vNodeTypeRow = vNodeTypeBin[vRow2]
-			
-			if not vNodeTypeRow then
-				vNodeTypeRow = {}
-				vNodeTypeBin[vRow2] = vNodeTypeRow
-			end
-			
-			local vExistingNode = vNodeTypeRow[vColumn2]
-			
-			if vExistingNode then
-				vExistingNode[POS_X] = vExistingNode[POS_X] + vNodeData[POS_X]
-				vExistingNode[POS_Y] = vExistingNode[POS_Y] + vNodeData[POS_Y]
-				vExistingNode[COUNT] = vExistingNode[COUNT] + vNodeData[COUNT]
-				vExistingNode.CollapseCount = vExistingNode.CollapseCount + 1
-			else
-				local vNewNodeData = {}
-				
-				for vKey, vValue in pairs(vNodeData) do
-					vNewNodeData[vKey] = vValue
-				end
-				
-				vNewNodeData.CollapseCount = 1
-				vNewNodeData.NodeID = vNodeID
-				vNodeTypeRow[vColumn2] = vNewNodeData
-			end -- if vExistingNode
-		end -- while vNodeIndex
-	end -- for vNodeType
-	
-	return vNodeBin
-end
-
-function Mappy:CollapseNearbyGathererNodes(pNodeBin)
-	for vNodeType, vNodeTypeBin in pairs(pNodeBin) do
-		for vRow, vRowData in pairs(vNodeTypeBin) do
-			for vColumn, vNodeData in pairs(vRowData) do
-				for vRowOffset = -4, 4 do
-					for vColOffset = -4, 4 do
-						if vRowOffset ~= 0 or vColOffset ~= 0 then
-							local vRow2 = vRow + vRowOffset
-							local vColumn2 = vColumn + vColOffset
-							
-							local vRowData2 = vNodeTypeBin[vRow2]
-							local vNodeData2 = vRowData2 and vRowData2[vColumn2]
-							
-							if vNodeData2 then
-								vNodeData2[POS_X] = vNodeData[POS_X] + vNodeData2[POS_X]
-								vNodeData2[POS_Y] = vNodeData[POS_Y] + vNodeData2[POS_Y]
-								vNodeData2[COUNT] = vNodeData[COUNT] + vNodeData2[COUNT]
-								
-								vNodeData2.CollapseCount = vNodeData.CollapseCount + vNodeData2.CollapseCount
-								
-								vRowData[vColumn] = nil
-								
-								Mappy:NoteMessage("Collapsing nearby %s node", vNodeType)
-							end
-						end -- if vRowOffset
-					end -- for vColOffset
-				end -- for vRowOffset
-			end -- for vColumn
-		end -- for vRow
-	end -- for vNodeType
-end
-
-function Mappy:AdjustCollapsedNodePositions(pNodeBin)				
-	for vNodeType, vNodeTypeBin in pairs(pNodeBin) do
-		for vRow, vRowData in pairs(vNodeTypeBin) do
-			for vColumn, vNodeData in pairs(vRowData) do
-				if vNodeData.CollapseCount > 1 then
-					vNodeData[POS_X] = vNodeData[POS_X] / vNodeData.CollapseCount
-					vNodeData[POS_Y] = vNodeData[POS_Y] / vNodeData.CollapseCount
-				end
-			end -- for vColumn
-		end -- for vRow
-	end -- for vNodeType
-end
-
-function Mappy:SaveGathererData(pNodeBin, pZoneData)
-	for vKey, _ in pairs(pZoneData) do
-		pZoneData[vKey] = nil
-	end
-	
-	for vNodeType, vNodeTypeBin in pairs(pNodeBin) do
-		for vRow, vRowBin in pairs(vNodeTypeBin) do
-			for vColumn, vNodeData in pairs(vRowBin) do
-				local vNodeList = pZoneData[vNodeData.NodeID]
-				
-				if not vNodeList then
-					vNodeList =
-					{
-						gtype = vNodeType
-					}
-					pZoneData[vNodeData.NodeID] = vNodeList
-				end
-				
-				table.insert(vNodeList, vNodeData)
-			end
-		end
-	end
-	
-	Gatherer.Report.NeedsUpdate()
 end
 
 ----------------------------------------
@@ -2784,102 +3097,56 @@ function Mappy._OptionsPanel:Construct(pParent)
     self.Desc:SetText("Main settings. Please report bugs on GitHub <3")
 
     --------------------------------
-    -- size alpha header
-    --------------------------------
-    self.SizeLine = self:CreateLine()
-    self.SizeLine:SetStartPoint("TOPLEFT", self, 10, -100)
-    self.SizeLine:SetEndPoint("TOPRIGHT", self, -20, -100)
-    self.SizeLine:SetColorTexture(1,1,1,0.25)
-    self.SizeLine:SetThickness(2)
-
-    self.SizeTitle = self:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    self.SizeTitle:SetPoint("TOPLEFT", self.SizeLine, 5, 13)
-    self.SizeTitle:SetText("Size and alpha settings")
-
-	-- Size slider
-	
-	self.SizeSlider = CreateFrame("Slider", "MappySizeSlider", self, "OptionsSliderTemplate")
-	self.SizeSlider:SetWidth(380)
-	self.SizeSlider:SetPoint("TOPLEFT", self.SizeLine, "BOTTOMLEFT", 20, -30)
-	MappySizeSliderLow:SetText("Small")
-	MappySizeSliderHigh:SetText("Large")
-    --stepping
-    self.SizeSlider:SetMinMaxValues(80, 1000)
-    self.SizeSlider:SetValueStep(1)
-    self.SizeSlider:SetObeyStepOnDrag(true)
-    self.SizeSlider:SetStepsPerPage(1)
-    -- initial value
-    MappySizeSliderText:SetText("Size - " .. (Mappy.CurrentProfile.MinimapSize or 1))
-    -- action
-    self.SizeSlider:SetScript("OnValueChanged", function (self, value)
-        local vSize = tonumber(string.format("%.2f", value))
-        Mappy:SetMinimapSize(vSize)
-        MappySizeSliderText:SetText("Size - " .. vSize)
-    end)
-	
-	-- Alpha slider
-	
-	self.AlphaSlider = CreateFrame("Slider", "MappyAlphaSlider", self, "OptionsSliderTemplate")
-	self.AlphaSlider:SetWidth(180)
-	self.AlphaSlider:SetPoint("TOPLEFT", self.SizeSlider, "BOTTOMLEFT", 0, -35)
-	self.AlphaSlider:SetScript("OnValueChanged", function (self) Mappy:SetMinimapAlpha(self:GetValue()) end)
-	MappyAlphaSliderText:SetText("Alpha")
-	self.AlphaSlider:SetMinMaxValues(0, 1)
-	
-	-- Combat alpha slider
-	
-	self.CombatAlphaSlider = CreateFrame("Slider", "MappyCombatAlphaSlider", self, "OptionsSliderTemplate")
-	self.CombatAlphaSlider:SetWidth(180)
-	self.CombatAlphaSlider:SetPoint("TOPLEFT", self.AlphaSlider, "TOPRIGHT", 20, 0)
-	self.CombatAlphaSlider:SetScript("OnValueChanged", function (self) Mappy:SetMinimapCombatAlpha(self:GetValue()) end)
-	MappyCombatAlphaSliderText:SetText("Combat Alpha")
-	self.CombatAlphaSlider:SetMinMaxValues(0, 1)
-	
-	-- Movement alpha slider
-	
-	self.MovingAlphaSlider = CreateFrame("Slider", "MappyMovingAlphaSlider", self, "OptionsSliderTemplate")
-	self.MovingAlphaSlider:SetWidth(180)
-	self.MovingAlphaSlider:SetPoint("TOPLEFT", self.CombatAlphaSlider, "TOPRIGHT", 20, 0)
-	self.MovingAlphaSlider:SetScript("OnValueChanged", function (self) Mappy:SetMinimapMovingAlpha(self:GetValue()) end)
-	MappyMovingAlphaSliderText:SetText("Movement Alpha")
-	self.MovingAlphaSlider:SetMinMaxValues(0, 1)
-
-    --------------------------------
     -- main settings header
     --------------------------------
     self.SettingsLine = self:CreateLine()
-    self.SettingsLine:SetStartPoint("TOPLEFT", self, 10, -250)
-    self.SettingsLine:SetEndPoint("TOPRIGHT", self, -20, -250)
+    self.SettingsLine:SetStartPoint("TOPLEFT", self, 10, -100)
+    self.SettingsLine:SetEndPoint("TOPRIGHT", self, -20, -100)
     self.SettingsLine:SetColorTexture(1,1,1,0.25)
     self.SettingsLine:SetThickness(2)
 
     self.SettingsHeader = self:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     self.SettingsHeader:SetPoint("TOPLEFT", self.SettingsLine, 5, 13)
-    self.SettingsHeader:SetText("Main settings")
+    self.SettingsHeader:SetText("Settings")
 
-	-- Hide zone name
+	-- Ghost
 
-	self.HideZoneNameCheckbutton = CreateFrame("CheckButton", "MappyHideZoneNameCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.HideZoneNameCheckbutton:SetPoint("TOPLEFT", self.SettingsLine, "TOPLEFT", 10, -15)
-	self.HideZoneNameCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideZoneName(self:GetChecked()) end)
-	MappyHideZoneNameCheckbuttonText:SetText("Hide zone name")
+	self.GhostCheckbutton = CreateFrame("CheckButton", "MappyGhostCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.GhostCheckbutton:SetPoint("TOPLEFT", self.SettingsLine, "BOTTOMLEFT", 10, -15)
+	self.GhostCheckbutton:SetScript("OnClick", function (self) Mappy:SetGhost(self:GetChecked()) end)
+	MappyGhostCheckbuttonText:SetText("Pass clicks through")
 
-	-- Hide background
+    -- Use Addon positioning
 
-	self.HideBorderCheckbutton = CreateFrame("CheckButton", "MappyHideBorderCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.HideBorderCheckbutton:SetPoint("TOPLEFT", self.HideZoneNameCheckbutton, "TOPLEFT", 0, -25)
-	self.HideBorderCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideBorder(self:GetChecked()) end)
-	MappyHideBorderCheckbuttonText:SetText("Hide border")
-	
+    self.AddonPositionCheckbutton = CreateFrame("CheckButton", "MappyAddonPositionCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+    self.AddonPositionCheckbutton:SetPoint("TOPLEFT", self.GhostCheckbutton, "TOPLEFT", 0, -25)
+    self.AddonPositionCheckbutton:SetScript("OnClick", function (self) Mappy:SetAddonPosition(self:GetChecked()) end)
+    MappyAddonPositionCheckbuttonText:SetText("Use Addon positioning instead of Edit Mode")
+
+    -- Lock position
+
+	self.LockPositionCheckbutton = CreateFrame("CheckButton", "MappyLockPositionCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.LockPositionCheckbutton:SetPoint("TOPLEFT", self.AddonPositionCheckbutton, "TOPLEFT", 0, -25)
+	self.LockPositionCheckbutton:SetScript("OnClick", function (self) Mappy:SetLockPosition(self:GetChecked()) end)
+	MappyLockPositionCheckbuttonText:SetText("Lock position")
+
+    -- Gather section header
+    -- 12.0.7: Blizzard removed Minimap:SetBlipTexture() from API
+    -- TODO: Find a workaround. Custom blips overlapping these? Some addons seem to detect exact node names and coords just fine...
+
+    self.GatherHeader = self:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    self.GatherHeader:SetPoint("TOPRIGHT", self.SettingsLine, "TOPRIGHT", -5, 13)
+    self.GatherHeader:SetText("Blizz broke it in 12.0.7. Working on a workaround!")
+
 	-- Flash gathering nodes
-	
+
 	self.FlashGatherNodesCheckbutton = CreateFrame("CheckButton", "MappyFlashGatherNodesCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.FlashGatherNodesCheckbutton:SetPoint("TOPLEFT", self.HideZoneNameCheckbutton, "TOPLEFT", 340, 0)
+	self.FlashGatherNodesCheckbutton:SetPoint("TOPLEFT", self.GhostCheckbutton, "TOPLEFT", 340, 0)
 	self.FlashGatherNodesCheckbutton:SetScript("OnClick", function (self) Mappy:SetFlashGatherNodes(self:GetChecked()) end)
 	MappyFlashGatherNodesCheckbuttonText:SetText("Flash gathering nodes")
 
 	-- Small gathering nodes
-	
+
 	self.SmallGatherNodesCheckbutton = CreateFrame("CheckButton", "MappySmallGatherNodesCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
 	self.SmallGatherNodesCheckbutton:SetPoint("TOPLEFT", self.FlashGatherNodesCheckbutton, "TOPLEFT", 0, -25)
 	self.SmallGatherNodesCheckbutton:SetScript("OnClick", function (self) Mappy:SetSmallGatherNodes(self:GetChecked()) end)
@@ -2892,33 +3159,12 @@ function Mappy._OptionsPanel:Construct(pParent)
     self.OldGatherNodesCheckbutton:SetScript("OnClick", function (self) Mappy:SetOldGatherNodes(self:GetChecked()) end)
     MappyOldGatherNodesCheckbuttonText:SetText("Classic-style gathering nodes")
 
-	-- Ghost
-	
-	self.GhostCheckbutton = CreateFrame("CheckButton", "MappyGhostCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.GhostCheckbutton:SetPoint("TOPLEFT", self.OldGatherNodesCheckbutton, "TOPLEFT", 0, -40)
-	self.GhostCheckbutton:SetScript("OnClick", function (self) Mappy:SetGhost(self:GetChecked()) end)
-	MappyGhostCheckbuttonText:SetText("Pass clicks through")
-
-    -- Use Addon positioning
-
-    self.AddonPositionCheckbutton = CreateFrame("CheckButton", "MappyAddonPositionCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-    self.AddonPositionCheckbutton:SetPoint("TOPLEFT", self.HideBorderCheckbutton, "TOPLEFT", 0, -40)
-    self.AddonPositionCheckbutton:SetScript("OnClick", function (self) Mappy:SetAddonPosition(self:GetChecked()) end)
-    MappyAddonPositionCheckbuttonText:SetText("Use Addon positioning instead of Edit Mode")
-
-    -- Lock position
-
-	self.LockPositionCheckbutton = CreateFrame("CheckButton", "MappyLockPositionCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.LockPositionCheckbutton:SetPoint("TOPLEFT", self.AddonPositionCheckbutton, "TOPLEFT", 0, -25)
-	self.LockPositionCheckbutton:SetScript("OnClick", function (self) Mappy:SetLockPosition(self:GetChecked()) end)
-	MappyLockPositionCheckbuttonText:SetText("Lock position")
-
     --------------------------------
     -- coords settings header
     --------------------------------
     self.CoordLine = self:CreateLine()
-    self.CoordLine:SetStartPoint("TOPLEFT", self, 10, -424)
-    self.CoordLine:SetEndPoint("TOPRIGHT", self, -20, -424)
+    self.CoordLine:SetStartPoint("TOPLEFT", self, 10, -250)
+    self.CoordLine:SetEndPoint("TOPRIGHT", self, -20, -250)
     self.CoordLine:SetColorTexture(1,1,1,0.25)
     self.CoordLine:SetThickness(2)
 
@@ -2929,7 +3175,7 @@ function Mappy._OptionsPanel:Construct(pParent)
 	-- Hide coordinates
 
     self.HideCoordinatesCheckbutton = CreateFrame("CheckButton", "MappyHideCoordinatesCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-    self.HideCoordinatesCheckbutton:SetPoint("TOPLEFT", self.CoordLine, "TOPLEFT", 10, -15)
+    self.HideCoordinatesCheckbutton:SetPoint("TOPLEFT", self.CoordLine, "BOTTOMLEFT", 10, -15)
     self.HideCoordinatesCheckbutton:SetScript("OnClick", function (self) Mappy:SetShowCoordinates(self:GetChecked()) end)
     MappyHideCoordinatesCheckbuttonText:SetText("Show coordinates")
 
@@ -2968,7 +3214,7 @@ function Mappy._OptionsPanel:Construct(pParent)
     self.CoordSizeSlider:SetScript("OnValueChanged", function (self, value)
         local vSize = tonumber(string.format("%.2f", value))
         Mappy:SetCoordinatesSize(vSize)
-        MappyCoordSizeSliderText:SetText("Text scale - " .. vSize)
+        MappyCoordSizeSliderText:SetText("Text size - " .. vSize)
     end)
 
 
@@ -2979,15 +3225,25 @@ end
 function Mappy._OptionsPanel:OnShow()
 	Mappy.DisableUpdates = true
 
-	self.SizeSlider:SetValue(Mappy.CurrentProfile.MinimapSize or 140)
-	self.AlphaSlider:SetValue(Mappy.CurrentProfile.MinimapAlpha or 1)
-	self.CombatAlphaSlider:SetValue(Mappy.CurrentProfile.MinimapCombatAlpha or 0.2)
-	self.MovingAlphaSlider:SetValue(Mappy.CurrentProfile.MinimapMovingAlpha or 0.2)
-	self.HideZoneNameCheckbutton:SetChecked(Mappy.CurrentProfile.HideZoneName)
-	self.HideBorderCheckbutton:SetChecked(Mappy.CurrentProfile.HideBorder)
 	self.FlashGatherNodesCheckbutton:SetChecked(Mappy.CurrentProfile.FlashGatherNodes)
 	self.SmallGatherNodesCheckbutton:SetChecked(not Mappy.CurrentProfile.NormalGatherNodes)
     self.OldGatherNodesCheckbutton:SetChecked(Mappy.CurrentProfile.OldGatherNodes)
+	-- 12.0.7: Blizzard removed Minimap:SetBlipTexture() from API
+	self.FlashGatherNodesCheckbutton:SetEnabled(Mappy.enableBlips)
+	self.SmallGatherNodesCheckbutton:SetEnabled(Mappy.enableBlips)
+	self.OldGatherNodesCheckbutton:SetEnabled(Mappy.enableBlips)
+
+	if Mappy.enableBlips then
+		MappyFlashGatherNodesCheckbuttonText:SetFontObject("GameFontNormalSmall")
+		MappySmallGatherNodesCheckbuttonText:SetFontObject("GameFontNormalSmall")
+		MappyOldGatherNodesCheckbuttonText:SetFontObject("GameFontNormalSmall")
+	else
+		MappyFlashGatherNodesCheckbuttonText:SetFontObject("GameFontDisableSmall")
+		MappySmallGatherNodesCheckbuttonText:SetFontObject("GameFontDisableSmall")
+		MappyOldGatherNodesCheckbuttonText:SetFontObject("GameFontDisableSmall")
+	end
+
+    -- fufu: position is global, not per-profile
     self.AddonPositionCheckbutton:SetChecked(gMappyFufu_Settings.Position.UseAddonPosition)
     self.LockPositionCheckbutton:SetChecked(gMappyFufu_Settings.Position.LockPosition)
 	self.GhostCheckbutton:SetChecked(Mappy.CurrentProfile.GhostMinimap)
@@ -3010,6 +3266,239 @@ function Mappy._OptionsPanel:OnShow()
 end
 
 function Mappy._OptionsPanel:OnHide()
+end
+
+----------------------------------------
+Mappy._AppearancePanel = {}
+----------------------------------------
+
+function Mappy._AppearancePanel:New(pParent)
+    local frame = CreateFrame("Frame", nil, pParent)
+
+    frame.OnCommit = frame.okay
+    frame.OnDefault = frame.default
+    frame.OnRefresh = frame.refresh
+
+    return frame
+end
+
+function Mappy._AppearancePanel:Construct(pParent)
+	self:Hide()
+
+	self.name = "Appearance"
+	self.parent = "Mappy Continued"
+
+    local category = Mappy.SettingsCategory
+    -- fufu: no `subcategory.ID = self.name` (upstream 9564bbc): OpenToCategory
+    -- needs Blizzard's numeric ID; removed from the other panels in 9600e59.
+    local subcategory, layout = Settings.RegisterCanvasLayoutSubcategory(category, self, self.name, self.name)
+
+    --------------------------------
+    -- title header
+    --------------------------------
+    self.Title = self:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    self.Title:SetPoint("TOPLEFT", self, "TOPLEFT", 20, -20)
+    self.Title:SetText("Appearance")
+
+    self.Desc = self:CreateFontString(nil, "ARTWORK", "GameFontWhiteSmall")
+    self.Desc:SetPoint("TOPLEFT", self.Title, 1, -30)
+    self.Desc:SetText("Size and transparency settings.")
+
+    --------------------------------
+    -- size alpha header
+    --------------------------------
+    self.SizeLine = self:CreateLine()
+    self.SizeLine:SetStartPoint("TOPLEFT", self, 10, -100)
+    self.SizeLine:SetEndPoint("TOPRIGHT", self, -20, -100)
+    self.SizeLine:SetColorTexture(1,1,1,0.25)
+    self.SizeLine:SetThickness(2)
+
+    self.SizeTitle = self:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    self.SizeTitle:SetPoint("TOPLEFT", self.SizeLine, 5, 13)
+    self.SizeTitle:SetText("Size and alpha")
+
+	-- Size slider
+
+	self.SizeSlider = CreateFrame("Slider", "MappySizeSlider", self, "OptionsSliderTemplate")
+	self.SizeSlider:SetWidth(380)
+	self.SizeSlider:SetPoint("TOPLEFT", self.SizeLine, "BOTTOMLEFT", 20, -30)
+	MappySizeSliderLow:SetText("Small")
+	MappySizeSliderHigh:SetText("Large")
+    --stepping
+    self.SizeSlider:SetMinMaxValues(80, 1000)
+    self.SizeSlider:SetValueStep(1)
+    self.SizeSlider:SetObeyStepOnDrag(true)
+    self.SizeSlider:SetStepsPerPage(1)
+    -- initial value
+    MappySizeSliderText:SetText("Size - " .. (Mappy.CurrentProfile.MinimapSize or 1))
+    -- action
+    self.SizeSlider:SetScript("OnValueChanged", function (self, value)
+        local vSize = tonumber(string.format("%.2f", value))
+        Mappy:SetMinimapSize(vSize)
+        MappySizeSliderText:SetText("Size - " .. vSize)
+    end)
+
+	-- Alpha slider
+
+	self.AlphaSlider = CreateFrame("Slider", "MappyAlphaSlider", self, "OptionsSliderTemplate")
+	self.AlphaSlider:SetWidth(180)
+	self.AlphaSlider:SetPoint("TOPLEFT", self.SizeSlider, "BOTTOMLEFT", 0, -35)
+	MappyAlphaSliderLow:SetText("0%")
+	MappyAlphaSliderHigh:SetText("100%")
+	-- stepping
+	self.AlphaSlider:SetMinMaxValues(0, 1)
+	self.AlphaSlider:SetValueStep(0.01)
+	self.AlphaSlider:SetObeyStepOnDrag(true)
+	self.AlphaSlider:SetStepsPerPage(1)
+	-- initial value
+	MappyAlphaSliderText:SetText(string.format("Alpha - %.0f%%", (Mappy.CurrentProfile.MinimapAlpha or 1) * 100))
+	-- action
+	self.AlphaSlider:SetScript("OnValueChanged", function (self, value)
+        local vSize = tonumber(string.format("%.2f", value))
+        Mappy:SetMinimapAlpha(vSize)
+        MappyAlphaSliderText:SetText(string.format("Alpha - %.0f%%", vSize * 100))
+    end)
+
+	-- Combat alpha slider
+
+	self.CombatAlphaSlider = CreateFrame("Slider", "MappyCombatAlphaSlider", self, "OptionsSliderTemplate")
+	self.CombatAlphaSlider:SetWidth(180)
+	self.CombatAlphaSlider:SetPoint("TOPLEFT", self.AlphaSlider, "TOPRIGHT", 20, 0)
+	MappyCombatAlphaSliderLow:SetText("0%")
+	MappyCombatAlphaSliderHigh:SetText("100%")
+	-- stepping
+	self.CombatAlphaSlider:SetMinMaxValues(0, 1)
+	self.CombatAlphaSlider:SetValueStep(0.01)
+	self.CombatAlphaSlider:SetObeyStepOnDrag(true)
+	self.CombatAlphaSlider:SetStepsPerPage(1)
+	-- initial value
+	MappyCombatAlphaSliderText:SetText(string.format("Combat Alpha - %.0f%%", (Mappy.CurrentProfile.MinimapCombatAlpha or 1) * 100))
+	-- action
+	self.CombatAlphaSlider:SetScript("OnValueChanged", function (self, value)
+        local vSize = tonumber(string.format("%.2f", value))
+        Mappy:SetMinimapCombatAlpha(vSize)
+        MappyCombatAlphaSliderText:SetText(string.format("Combat Alpha - %.0f%%", vSize * 100))
+    end)
+
+	-- Movement alpha slider
+
+	self.MovingAlphaSlider = CreateFrame("Slider", "MappyMovingAlphaSlider", self, "OptionsSliderTemplate")
+	self.MovingAlphaSlider:SetWidth(180)
+	self.MovingAlphaSlider:SetPoint("TOPLEFT", self.CombatAlphaSlider, "TOPRIGHT", 20, 0)
+	MappyMovingAlphaSliderLow:SetText("0%")
+	MappyMovingAlphaSliderHigh:SetText("100%")
+	-- stepping
+	self.MovingAlphaSlider:SetMinMaxValues(0, 1)
+	self.MovingAlphaSlider:SetValueStep(0.01)
+	self.MovingAlphaSlider:SetObeyStepOnDrag(true)
+	self.MovingAlphaSlider:SetStepsPerPage(1)
+	-- initial value
+	MappyMovingAlphaSliderText:SetText(string.format("Movement Alpha - %.0f%%", (Mappy.CurrentProfile.MinimapMovingAlpha or 1) * 100))
+	-- action
+	self.MovingAlphaSlider:SetScript("OnValueChanged", function (self, value)
+        local vSize = tonumber(string.format("%.2f", value))
+        Mappy:SetMinimapMovingAlpha(vSize)
+        MappyMovingAlphaSliderText:SetText(string.format("Movement Alpha - %.0f%%", vSize * 100))
+    end)
+
+    --------------------------------
+    -- options header
+    --------------------------------
+    self.OptionsLine = self:CreateLine()
+    self.OptionsLine:SetStartPoint("TOPLEFT", self, 10, -250)
+    self.OptionsLine:SetEndPoint("TOPRIGHT", self, -20, -250)
+    self.OptionsLine:SetColorTexture(1,1,1,0.25)
+    self.OptionsLine:SetThickness(2)
+
+    self.OptionsHeader = self:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    self.OptionsHeader:SetPoint("TOPLEFT", self.OptionsLine, 5, 13)
+    self.OptionsHeader:SetText("Options")
+
+	-- Mouseover alpha toggle
+
+	self.HoverOpaqueCheckbutton = CreateFrame("CheckButton", "MappyHoverOpaqueCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.HoverOpaqueCheckbutton:SetPoint("TOPLEFT", self.OptionsLine, "BOTTOMLEFT", 10, -15)
+	self.HoverOpaqueCheckbutton:SetScript("OnClick", function (self) Mappy:SetMinimapHoverOpaque(self:GetChecked()) end)
+	MappyHoverOpaqueCheckbuttonText:SetText("100% alpha on mouseover")
+
+	-- Alpha ignore
+
+	self.FadeButtonsCheckbutton = CreateFrame("CheckButton", "MappyFadeButtonsCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.FadeButtonsCheckbutton:SetPoint("TOPLEFT", self.HoverOpaqueCheckbutton, "TOPLEFT", 0, -25)
+	self.FadeButtonsCheckbutton:SetScript("OnClick", function (self) Mappy:SetFadeButtons(not self:GetChecked()) end)
+	MappyFadeButtonsCheckbuttonText:SetText("Buttons ignore minimap alpha sliders")
+
+	-- Buttons on mouseover
+
+	self.AutoHideButtonsCheckbutton = CreateFrame("CheckButton", "MappyAutoHideButtonsCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.AutoHideButtonsCheckbutton:SetPoint("TOPLEFT", self.FadeButtonsCheckbutton, "TOPLEFT", 0, -25)
+	self.AutoHideButtonsCheckbutton:SetScript("OnClick", function (self) Mappy:SetAutoHideButtons(self:GetChecked()) end)
+	MappyAutoHideButtonsCheckbuttonText:SetText("Show buttons ONLY on mouseover")
+
+	-- Group Finder eye always visible (Forever client)
+
+	if Mappy.IsForeverClient then
+		self.AlwaysShowGroupFinderCheckbutton = CreateFrame("CheckButton", "MappyAlwaysShowGroupFinderCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+		self.AlwaysShowGroupFinderCheckbutton:SetPoint("TOPLEFT", self.AutoHideButtonsCheckbutton, "TOPLEFT", 30, -25)
+		self.AlwaysShowGroupFinderCheckbutton:SetScript("OnClick", function (self) Mappy:SetAlwaysShowGroupFinder(self:GetChecked()) end)
+		MappyAlwaysShowGroupFinderCheckbuttonText:SetText("Except the Group Finder eye")
+	end
+
+	-- Quest ring toggle
+
+	self.HideQuestRingCheckbutton = CreateFrame("CheckButton", "MappyHideQuestRingCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.HideQuestRingCheckbutton:SetPoint("TOPLEFT", self.HoverOpaqueCheckbutton, "TOPLEFT", 340, 0)
+	self.HideQuestRingCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideQuestRing(self:GetChecked()) end)
+	MappyHideQuestRingCheckbuttonText:SetText("Hide quest area border")
+
+	-- World quest ring toggle (Retail client)
+	-- Tentatively hidden on Forever since what would even use that?
+
+	if not Mappy.IsForeverClient then
+		self.HideTaskRingCheckbutton = CreateFrame("CheckButton", "MappyHideTaskRingCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+		self.HideTaskRingCheckbutton:SetPoint("TOPLEFT", self.HideQuestRingCheckbutton, "TOPLEFT", 0, -25)
+		self.HideTaskRingCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideTaskRing(self:GetChecked()) end)
+		MappyHideTaskRingCheckbuttonText:SetText("Hide world quest area border")
+	end
+
+	-- Archaeology ring toggle (Retail client)
+
+	if not Mappy.IsForeverClient then
+		self.HideArchRingCheckbutton = CreateFrame("CheckButton", "MappyHideArchRingCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+		self.HideArchRingCheckbutton:SetPoint("TOPLEFT", self.HideTaskRingCheckbutton, "TOPLEFT", 0, -25)
+		self.HideArchRingCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideArchRing(self:GetChecked()) end)
+		MappyHideArchRingCheckbuttonText:SetText("Hide archaeology area border")
+	end
+
+	self:SetScript("OnShow", self.OnShow)
+	self:SetScript("OnHide", self.OnHide)
+end
+
+function Mappy._AppearancePanel:OnShow()
+	Mappy.DisableUpdates = true
+
+	self.SizeSlider:SetValue(Mappy.CurrentProfile.MinimapSize or 140)
+	self.AlphaSlider:SetValue(Mappy.CurrentProfile.MinimapAlpha or 1)
+	self.CombatAlphaSlider:SetValue(Mappy.CurrentProfile.MinimapCombatAlpha or 0.2)
+	self.MovingAlphaSlider:SetValue(Mappy.CurrentProfile.MinimapMovingAlpha or 0.2)
+	self.HoverOpaqueCheckbutton:SetChecked(Mappy.CurrentProfile.MinimapHoverOpaque)
+	self.FadeButtonsCheckbutton:SetChecked(not Mappy.CurrentProfile.FadeButtons)
+	self.AutoHideButtonsCheckbutton:SetChecked(Mappy.CurrentProfile.AutoHideButtons)
+	if self.AlwaysShowGroupFinderCheckbutton then
+		self.AlwaysShowGroupFinderCheckbutton:SetChecked(Mappy.CurrentProfile.AlwaysShowGroupFinder)
+	end
+	self.HideQuestRingCheckbutton:SetChecked(Mappy.CurrentProfile.HideQuestRing)
+	if self.HideTaskRingCheckbutton then
+		self.HideTaskRingCheckbutton:SetChecked(Mappy.CurrentProfile.HideTaskRing)
+	end
+	if self.HideArchRingCheckbutton then
+		self.HideArchRingCheckbutton:SetChecked(Mappy.CurrentProfile.HideArchRing)
+	end
+
+	Mappy.DisableUpdates = false
+end
+
+function Mappy._AppearancePanel:OnHide()
 end
 
 ----------------------------------------
@@ -3059,34 +3548,58 @@ function Mappy._ButtonOptionsPanel:Construct(pParent)
 
     self.HideTitle = self:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     self.HideTitle:SetPoint("TOPLEFT", self.HideLine, 5, 13)
-    self.HideTitle:SetText("Hide buttons")
+    self.HideTitle:SetText("Hide")
 
-	-- Hide time-of-day
-	self.HideTimeOfDayCheckbutton = CreateFrame("CheckButton", "MappyHideTimeOfDayCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.HideTimeOfDayCheckbutton:SetPoint("TOPLEFT", self.HideLine, "BOTTOMLEFT", 10, -15)
-	self.HideTimeOfDayCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideTimeOfDay(self:GetChecked()) end)
-	MappyHideTimeOfDayCheckbuttonText:SetText("Hide calendar button")
+	-- Hide zone name
 
-	-- Hide Tracking Icon
+	self.HideZoneNameCheckbutton = CreateFrame("CheckButton", "MappyHideZoneNameCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.HideZoneNameCheckbutton:SetPoint("TOPLEFT", self.HideLine, "BOTTOMLEFT", 10, -15)
+	self.HideZoneNameCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideZoneName(self:GetChecked()) end)
+	MappyHideZoneNameCheckbuttonText:SetText("Hide zone name")
 
-	self.HideMiniMapTrackingCheckbutton = CreateFrame("CheckButton", "MappyHideMiniMapTrackingCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.HideMiniMapTrackingCheckbutton:SetPoint("TOPLEFT", self.HideTimeOfDayCheckbutton, "TOPLEFT", 0, -25)
-	self.HideMiniMapTrackingCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideTracking(self:GetChecked()) end)
-	MappyHideMiniMapTrackingCheckbuttonText:SetText("Hide Tracking icon")
+	-- Hide background
+
+	self.HideBorderCheckbutton = CreateFrame("CheckButton", "MappyHideBorderCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.HideBorderCheckbutton:SetPoint("TOPLEFT", self.HideZoneNameCheckbutton, "TOPLEFT", 0, -25)
+	self.HideBorderCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideBorder(self:GetChecked()) end)
+	MappyHideBorderCheckbuttonText:SetText("Hide border")
 
 	-- Hide Time Manager Clock
 
 	self.HideTimeManagerClockCheckbutton = CreateFrame("CheckButton", "MappyHideTimeManagerClockCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.HideTimeManagerClockCheckbutton:SetPoint("TOPLEFT", self.HideMiniMapTrackingCheckbutton, "TOPLEFT", 0, -25)
+	self.HideTimeManagerClockCheckbutton:SetPoint("TOPLEFT", self.HideBorderCheckbutton, "TOPLEFT", 0, -25)
 	self.HideTimeManagerClockCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideTimeManagerClock(self:GetChecked()) end)
 	MappyHideTimeManagerClockCheckbuttonText:SetText("Hide clock")
 
-    -- Hide Addon Compartment Icon
+	-- Hide day/night icon (Forever client)
+
+	if MinimapCluster.DielFrame then
+		self.HideDielCheckbutton = CreateFrame("CheckButton", "MappyHideDielCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+		self.HideDielCheckbutton:SetPoint("TOPLEFT", self.HideTimeManagerClockCheckbutton, "TOPLEFT", 0, -25)
+		self.HideDielCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideDiel(self:GetChecked()) end)
+		MappyHideDielCheckbuttonText:SetText("Hide day/night icon")
+	end
+
+	-- Hide calendar
+
+	self.HideTimeOfDayCheckbutton = CreateFrame("CheckButton", "MappyHideTimeOfDayCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.HideTimeOfDayCheckbutton:SetPoint("TOPLEFT", self.HideZoneNameCheckbutton, "TOPLEFT", 340, 0)
+	self.HideTimeOfDayCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideTimeOfDay(self:GetChecked()) end)
+	MappyHideTimeOfDayCheckbuttonText:SetText("Hide calendar button")
+
+	-- Hide Tracking button
+
+	self.HideMiniMapTrackingCheckbutton = CreateFrame("CheckButton", "MappyHideMiniMapTrackingCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+	self.HideMiniMapTrackingCheckbutton:SetPoint("TOPLEFT", self.HideTimeOfDayCheckbutton, "TOPLEFT", 0, -25)
+	self.HideMiniMapTrackingCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideTracking(self:GetChecked()) end)
+	MappyHideMiniMapTrackingCheckbuttonText:SetText("Hide Tracking button")
+
+    -- Hide Addon Compartment button
 
     self.HideAddonCompartmentCheckbutton = CreateFrame("CheckButton", "MappyHideAddonCompartmentCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-    self.HideAddonCompartmentCheckbutton:SetPoint("TOPLEFT", self.HideTimeManagerClockCheckbutton, "TOPLEFT", 0, -25)
+    self.HideAddonCompartmentCheckbutton:SetPoint("TOPLEFT", self.HideMiniMapTrackingCheckbutton, "TOPLEFT", 0, -25)
     self.HideAddonCompartmentCheckbutton:SetScript("OnClick", function (self) Mappy:SetHideAddonCompartment(self:GetChecked()) end)
-    MappyHideAddonCompartmentCheckbuttonText:SetText("Hide Addon Compartment icon")
+    MappyHideAddonCompartmentCheckbuttonText:SetText("Hide Addon Compartment button")
 
     --------------------------------
     -- stacking header
@@ -3104,7 +3617,7 @@ function Mappy._ButtonOptionsPanel:Construct(pParent)
 	-- Addon button stacking
 
 	self.AutoStackCheckbutton = CreateFrame("CheckButton", "MappyAutoStackCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
-	self.AutoStackCheckbutton:SetPoint("TOPLEFT", self.StackingLine, "TOPLEFT", 10, -15)
+	self.AutoStackCheckbutton:SetPoint("TOPLEFT", self.StackingLine, "BOTTOMLEFT", 10, -15)
 	self.AutoStackCheckbutton:SetScript("OnClick", function (self) Mappy:SetAutoArrangeButtons(self:GetChecked()) end)
 	MappyAutoStackCheckbuttonText:SetText("Auto-arrange addon buttons")
 	
@@ -3144,15 +3657,29 @@ function Mappy._ButtonOptionsPanel:Construct(pParent)
 	self.StackToScreenCheckbutton:SetScript("OnClick", function (self) Mappy:SetStackToScreen(self:GetChecked()) end)
 	MappyStackToScreenCheckbuttonText:SetText("Stack around screen")
 
+	-- Group Finder eye stacking (Forever client)
+
+	if Mappy.IsForeverClient then
+		self.StackGroupFinderCheckbutton = CreateFrame("CheckButton", "MappyStackGroupFinderCheckbutton", self, "InterfaceOptionsCheckButtonTemplate")
+		self.StackGroupFinderCheckbutton:SetPoint("TOPLEFT", self.AutoStackCheckbutton, "TOPLEFT", 340, 0)
+		self.StackGroupFinderCheckbutton:SetScript("OnClick", function (self) Mappy:SetStackGroupFinder(self:GetChecked()) end)
+		MappyStackGroupFinderCheckbuttonText:SetText("Include the Group Finder eye")
+	end
+
 	self:SetScript("OnShow", self.OnShow)
 	self:SetScript("OnHide", self.OnHide)
 end
 
 function Mappy._ButtonOptionsPanel:OnShow()
 	Mappy.DisableUpdates = true
+	self.HideZoneNameCheckbutton:SetChecked(Mappy.CurrentProfile.HideZoneName)
+	self.HideBorderCheckbutton:SetChecked(Mappy.CurrentProfile.HideBorder)
 	self.HideTimeOfDayCheckbutton:SetChecked(Mappy.CurrentProfile.HideTimeOfDay)
 	self.HideMiniMapTrackingCheckbutton:SetChecked(Mappy.CurrentProfile.HideTracking)
 	self.HideTimeManagerClockCheckbutton:SetChecked(Mappy.CurrentProfile.HideTimeManagerClock)
+	if self.HideDielCheckbutton then
+		self.HideDielCheckbutton:SetChecked(Mappy.CurrentProfile.HideDiel)
+	end
     self.HideAddonCompartmentCheckbutton:SetChecked(Mappy.CurrentProfile.HideAddonCompartment)
 	self.AutoStackCheckbutton:SetChecked(Mappy.CurrentProfile.AutoArrangeButtons)
 	self.TopLeftCheckbutton:SetChecked(Mappy.CurrentProfile.StartingCorner == "TOPLEFT")
@@ -3161,6 +3688,9 @@ function Mappy._ButtonOptionsPanel:OnShow()
 	self.BottomRightCheckbutton:SetChecked(Mappy.CurrentProfile.StartingCorner == "BOTTOMRIGHT")
 	self.CCWCheckbutton:SetChecked(Mappy.CurrentProfile.CCW)
 	self.StackToScreenCheckbutton:SetChecked(Mappy.CurrentProfile.StackToScreen)
+	if self.StackGroupFinderCheckbutton then
+		self.StackGroupFinderCheckbutton:SetChecked(Mappy.CurrentProfile.StackGroupFinder)
+	end
 
 	Mappy.DisableUpdates = false
 end

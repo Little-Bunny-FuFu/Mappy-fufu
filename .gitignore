@@ -13,3 +13,6 @@ wow-ui-source/
 
 # graphify knowledge-graph output (regenerable; rebuild: graphify update)
 graphify-out/
+
+# Plans, specs
+old-plans/

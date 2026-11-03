@@ -2,7 +2,7 @@
 
 A continuation of [Mappy](https://github.com/Mundocani/Mappy) addon for World of Warcraft, originally created by [Mundocani](https://github.com/Mundocani).
 
-Compatible with Midnight!
+Compatible with Midnight and Forever!
 
 Since the original addon seems pretty much abandoned, I've decided to fork and maintain it. I love this addon too much to find a new one, so I've fixed it instead!
 
@@ -19,15 +19,18 @@ Other features include:
 * Option to move the minimap via Edit Mode only
 * Option to move the minimap via addon settings only
 * Automatic stacking of minimap buttons along the minimap OR screen
+* Option to show minimap buttons only on mouseover
 * Pretty-ing the stock Calendar, Mail and Tracking buttons to actually look like buttons
+* Custom square textures for certain Blizzard overlays
 * Zooming in and out with the mouse wheel
 * Alpha settings, separate for combat, movement and default state
+* Option to hide the quest/WQ/archaeology border ring
 * Profiles (including being able to set a profile for mounting, dungeon etc)
-* Gathering overlay support for Gatherer and GatherMate
+* Gathering overlay support for GatherMate
 * Compatibility with MinimapButtonBag Reborn
 * Compatibility with FarmHud
-* Bigger and/or blinking gathering nodes
-* Classic-style dot for gathering nodes
+* ~~Bigger and/or blinking gathering nodes~~ - **No longer possible since 12.0.7**
+* ~~Classic-style dot for gathering nodes~~ - **No longer possible since 12.0.7**
 * Player coordinates
 
 ## Slash commands
