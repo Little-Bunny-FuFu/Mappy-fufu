@@ -523,10 +523,12 @@ function Mappy:InitializeMinimap()
     -- Reapply addon positioning after Blizzard reapplies the Edit Mode layout (level up etc)
     hooksecurefunc(EditModeManagerFrame, "UpdateLayoutInfo", self.EditModeLayoutUpdated)
 
-    -- Stop minimap rotation
-    self:StopMinimapRotation()
-    -- Also when settings change
-    self.EventLib:RegisterEvent("CVAR_UPDATE", self.CVarUpdated, self)
+    -- Stop minimap rotation (fufu: Forever only, see StopMinimapRotation)
+    if self.IsForeverClient then
+        self:StopMinimapRotation()
+        -- Also when settings change
+        self.EventLib:RegisterEvent("CVAR_UPDATE", self.CVarUpdated, self)
+    end
 
     if Mappy.FarmHudEnabled then
         -- Stop rotation and restore Mappy's alpha when FarmHud's HUD hides
@@ -568,8 +570,10 @@ function Mappy:InitializeMinimap()
     end
 
     -- Put the zone text back whenever Edit Mode moves it
-    hooksecurefunc(MinimapCluster, "SetHeaderUnderneath", function() Mappy:AnchorZoneText() end)
-    -- (fufu: the initial anchor is applied by ApplyProtectedInitState)
+    -- fufu: schedule only (called inside Edit Mode's UpdateSystems chain);
+    -- ConfigureMinimap re-anchors the zone text on every pass. The initial
+    -- anchor is applied by ApplyProtectedInitState.
+    hooksecurefunc(MinimapCluster, "SetHeaderUnderneath", function() Mappy:RequestReconfigure("header") end)
 
     -- Clear Blizzard's minimap insets whenever they're set
     hooksecurefunc(C_Minimap, "SetMinimapInsetInfo", function(pID) Mappy:ClearBlizzardInsets(pID) end)
@@ -1089,7 +1093,12 @@ end
 
 -- Stop minimap rotation
 -- But let FarmHud do whatever
+-- fufu: Forever only (user decision 2026-11-03): there it undoes Blizzard's
+-- rotation re-skin; on retail Mappy never writes the user's rotateMinimap CVar.
 function Mappy:StopMinimapRotation()
+    if not self.IsForeverClient then
+        return
+    end
     if not self:IsMinimapInFarmHud() and GetCVarBool("rotateMinimap") then
 		SetCVar("rotateMinimap", false)
 	end
@@ -1704,6 +1713,9 @@ function Mappy:ConfigureMinimap()
 	-- Apply one-time protected init on first out-of-combat run
 	self:ApplyProtectedInitState()
 
+	-- Put the zone text back if Edit Mode moved it (SetHeaderUnderneath hook)
+	self:AnchorZoneText()
+
 	self.StartingCorner = self.CurrentProfile.StartingCorner or "TOPRIGHT"
     self.CoordAnchor = self.CurrentProfile.CoordAnchor or "BOTTOMLEFT"
 
@@ -1720,7 +1732,11 @@ function Mappy:ConfigureMinimap()
     self:OverrideEditModeSize()
 
     -- Recalculate the Group Finder's default position at Mappy's scale (Forever client)
-    EventRegistry:TriggerEvent("Minimap.OnScaleUpdated", 1)
+    -- fufu: Forever only. No retail consumer exists, and EventRegistry
+    -- callbacks run synchronously under Mappy's taint.
+    if Mappy.IsForeverClient then
+        EventRegistry:TriggerEvent("Minimap.OnScaleUpdated", 1)
+    end
 
     if not self:IsMinimapInFarmHud() then
 	    Minimap:SetWidth(self.CurrentProfile.MinimapSize)
@@ -2301,14 +2317,15 @@ end
 function Mappy:EditModeLayoutUpdated()
     -- Addon positioning only, ConfigureMinimap's SetActiveLayout would loop back here
     if gMappyFufu_Settings.Position.UseAddonPosition then
-        -- Undo Edit Mode's position and size instantly (unless editing)
-        -- No scheduler to avoid one frame visual bounce between positions
-        if not EditModeManagerFrame:IsEditModeActive() then
-            Mappy:SetFramePosition(MinimapCluster, gMappyFufu_Settings.Position)
-            Mappy:OverrideEditModeSize()
-        end
-
-        Mappy:LoadProfile(Mappy.CurrentProfile)
+        -- fufu: schedule only. This hook runs inside Blizzard's
+        -- EditModeManagerFrame:UpdateLayoutInfo -> UpdateSystems call chain
+        -- (the path behind the 2026-05-16 taint incident) and can fire in
+        -- combat (level-up). Upstream 1d75cf9 re-anchors synchronously
+        -- through the Edit Mode SetPoint override; instead let the debounced
+        -- ConfigureMinimap pass (SetFramePosition + OverrideEditModeSize,
+        -- combat/Edit-Mode gated, replayed on ExitEditMode) do it. Cost: a
+        -- <=250 ms bounce after Blizzard re-applies the layout.
+        Mappy:RequestReconfigure("layout")
     end
 end
 
